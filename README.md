@@ -51,9 +51,20 @@ connect via streamable HTTP:
 {"url": "http://localhost:8000/"}
 ```
 
-## Environment Variables
+## Configuration
+
+### CLI Arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `--transport` | `stdio` | Transport to use: `stdio` or `streamable-http` |
+| `--db` | `data/interesting.db` | Path to the SQLite database file |
+
+### Environment Variables
+
+CLI arguments take precedence over environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `streamable-http` |
-| `INTERESTING_DB_PATH` | `interesting.db` | Path to the SQLite database file |
+| `INTERESTING_DB_PATH` | `data/interesting.db` | Path to the SQLite database file |
