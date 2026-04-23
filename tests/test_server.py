@@ -123,6 +123,12 @@ async def test_remove_topic_success() -> None:
     assert remove_result.content[0].text == "OK"  # type: ignore[union-attr]
 
 
+async def test_remove_topic_empty_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": ""})
+    assert result.isError
+
+
 async def test_remove_topic_not_found_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.call_tool("remove_topic", {"id": "no-such-id"})
