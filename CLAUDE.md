@@ -17,3 +17,4 @@ MCP server for deterministically tracking news stories of interest.
 - Ensure tests can be run while production server is running on same system
 - Strict python type annotations throughout
 - Rigorous logging to console (use the module logger pattern in server.py)
+- All log output must be timestamped

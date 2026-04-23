@@ -3,6 +3,7 @@ import logging
 import os
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -10,7 +11,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("interesting")
+mcp = FastMCP(
+    "interesting",
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["soliboy.tail52f9f8.ts.net", "localhost", "127.0.0.1"]
+    ),
+)
 
 
 @mcp.tool(description="Verify connectivity with the server.")
@@ -24,7 +31,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="interesting MCP server")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse"],
+        choices=["stdio", "streamable-http"],
         default=None,
         help="Transport to use (overrides MCP_TRANSPORT env var)",
     )
