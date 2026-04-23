@@ -1,15 +1,23 @@
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+import logging
 
-app = Server("interesting")
+from mcp.server.fastmcp import Context, FastMCP
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+mcp = FastMCP("interesting")
 
 
-async def main() -> None:
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+@mcp.tool(description="Verify connectivity with the server.")
+def ping(ctx: Context) -> str:
+    logger.info("ping called")
+    ctx.info("ping called")
+    return "pong"
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())
+    logger.info("Starting interesting MCP server")
+    mcp.run()

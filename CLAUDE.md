@@ -7,7 +7,7 @@ MCP server for deterministically tracking news stories of interest.
 ```
 python -m venv .venv
 source .venv/Scripts/activate  # Windows; use .venv/bin/activate on macOS/Linux
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt   # installs package as editable + dev tools
 ```
 
 ## Commands

@@ -4,7 +4,8 @@
       "Bash(python -m venv .venv)",
       "Bash(.venv/Scripts/pip install *)",
       "Bash(.venv/Scripts/pytest)",
-      "Bash(.venv/Scripts/ruff check *)"
+      "Bash(.venv/Scripts/ruff check *)",
+      "Bash(.venv/Scripts/pytest -v)"
     ]
   }
 }
