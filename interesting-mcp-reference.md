@@ -1,6 +1,6 @@
 # Reference: interesting MCP Server
 
-The `interesting` MCP server provides persistent, cross-session tracking of news stories the user wants to follow. This doc covers what each tool does and how to format its inputs. Triggers for when to call each tool are in the project instructions.
+The `interesting` MCP server provides persistent, cross-session tracking of news stories the user wants to follow. This doc covers what each tool does, how to format its inputs, and when to call it.
 
 ## What is a "topic"?
 
@@ -80,3 +80,38 @@ To remove by user description rather than ID, call `list_topics` first to find t
 - An empty topic list is a valid state. Do not fabricate entries.
 - If a call fails unexpectedly, report the error to the user rather than retrying silently or substituting a different action.
 - There is not function to update an existing topic. To update, you must remove and re-add, getting a new ID.
+
+---
+
+## Operational Context
+
+How the chat application is expected to use these tools.
+
+### Topic Tracking
+
+The user can add, list, and remove tracked topics conversationally. Map natural language to tools as follows:
+
+| User intent | Tool | Notes |
+|-------------|------|-------|
+| "track X", "follow up on X", "keep an eye on X" | `add_topic` | Apply title and scope rules above |
+| "what am I tracking?", "show my topics" | `list_topics` | |
+| "stop tracking X", "drop X", "remove X from my list" | `remove_topic` | Call `list_topics` first to resolve the ID; if multiple topics could match, ask the user rather than guessing |
+
+### News Roundup
+
+**Trigger:** `news {scope} {timeframe}` (scope defaults to `us`, timeframe defaults to `48h`)
+
+| Parameter | Options | Default |
+|-----------|---------|---------|
+| scope | `pdx` / `us` / `world` | `us` |
+| timeframe | `Xh` or `Xd` (hours/days) | `48h` |
+
+**Workflow:**
+1. Call `list_topics` to retrieve tracked stories.
+2. Filter by requested scope using the containment rule (see Filtering rule above).
+3. Search for new developments on each included tracked topic within the requested timeframe.
+4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
+5. Search for additional stories matching the requested scope and user interest profile.
+6. Use the `recent_chats` tool (if available) to avoid re-presenting stories already covered; if there is no new information, omit the story entirely.
+
+The tracked topic list is the source of truth for follow-up stories. Do not use `recent_chats` or conversation memory alone to reconstruct what the user cares about across sessions.
