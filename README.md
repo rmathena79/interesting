@@ -29,31 +29,31 @@ MCP clients launch the server as a subprocess over stdio:
 Replace `C:/path/to/` with the absolute path to this repo's `.venv`. The server
 logs to stderr; MCP protocol messages travel over stdout/stdin.
 
-### SSE (persistent server)
+### Streamable HTTP (persistent server)
 
-Run the server in SSE mode so it stays alive across sessions and is reachable
-over the network:
+Run the server in streamable HTTP mode so it stays alive across sessions and is
+reachable over the network:
 
 ```
-MCP_TRANSPORT=sse python -m interesting.server
+MCP_TRANSPORT=streamable-http python -m interesting.server
 ```
 
 Or use the CLI flag:
 
 ```
-python -m interesting.server --transport sse
+python -m interesting.server --transport streamable-http
 ```
 
 The server binds to `0.0.0.0:8000` by default. Configure Claude Desktop to
-connect via SSE:
+connect via streamable HTTP:
 
 ```json
-{"url": "http://localhost:8000/sse"}
+{"url": "http://localhost:8000/"}
 ```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `sse` |
+| `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `streamable-http` |
 | `INTERESTING_DB_PATH` | `interesting.db` | Path to the SQLite database file |

@@ -15,7 +15,7 @@ tracking news stories of interest.
 - Call `ping` at the start of any session to confirm connectivity before using
   other tools.
 - All tools return plain text unless otherwise noted.
-- The server may be running as a persistent SSE server (e.g., via
-  `MCP_TRANSPORT=sse python -m interesting.server`). In that case it retains
-  state across sessions and is reachable at `http://localhost:8000/sse` by
+- The server may be running as a persistent streamable HTTP server (e.g., via
+  `MCP_TRANSPORT=streamable-http python -m interesting.server`). In that case it
+  retains state across sessions and is reachable at `http://localhost:8000/` by
   default.
