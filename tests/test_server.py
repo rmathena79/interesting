@@ -4,13 +4,18 @@ import pathlib
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
+import interesting.server as server_module
 from interesting import storage
 from interesting.server import mcp
 
 
 @pytest.fixture(autouse=True)
-def isolated_db(tmp_path: pathlib.Path) -> None:
-    storage.init_db(str(tmp_path / "test.db"))
+def isolated_db(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_file = str(tmp_path / "test.db")
+    # Set _db_path so the lifespan uses the test DB if it runs during the session.
+    monkeypatch.setattr(server_module, "_db_path", db_file)
+    # Also initialize directly in case the test harness skips the lifespan.
+    storage.init_db(db_file)
 
 
 async def test_ping_returns_pong() -> None:

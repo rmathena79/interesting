@@ -2,6 +2,8 @@ import argparse
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -14,8 +16,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Set before mcp.run(); overridden in __main__ when --db or INTERESTING_DB_PATH is provided.
+_db_path: str = os.environ.get("INTERESTING_DB_PATH", "interesting.db")
+
+
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
+    storage.init_db(_db_path)
+    yield
+
+
 mcp = FastMCP(
     "interesting",
+    lifespan=_lifespan,
     streamable_http_path="/",
     transport_security=TransportSecuritySettings(
         allowed_hosts=["soliboy.tail52f9f8.ts.net", "localhost", "127.0.0.1"]
@@ -90,8 +103,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
-    db_path: str = args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db")
+    _db_path = args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db")
 
-    logger.info("Starting interesting MCP server with transport=%s db=%s", transport, db_path)
-    storage.init_db(db_path)
+    logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
     mcp.run(transport=transport)  # type: ignore[arg-type]
