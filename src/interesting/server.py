@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import pathlib
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -16,8 +17,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_DATA_DIR = "data"
+
+
+def _resolve_db_path(name: str) -> str:
+    """Resolve a DB name/path to a path under the data/ directory.
+
+    Both forward and backward slashes are treated as path separators so that
+    Windows-style paths work on any platform, including when passed through
+    JSON configs where backslash escaping may vary.
+    """
+    normalized = name.replace("\\", "/")
+    return str(pathlib.Path(_DATA_DIR) / normalized)
+
+
 # Set before mcp.run(); overridden in __main__ when --db or INTERESTING_DB_PATH is provided.
-_db_path: str = os.environ.get("INTERESTING_DB_PATH", "data/interesting.db")
+_db_path: str = _resolve_db_path(os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
 
 
 @asynccontextmanager
@@ -96,7 +111,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
-    _db_path = args.db or os.environ.get("INTERESTING_DB_PATH", "data/interesting.db")
+    _db_path = _resolve_db_path(
+        args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db")
+    )
 
     logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
     mcp.run(transport=transport)  # type: ignore[arg-type]
