@@ -1,4 +1,5 @@
 import logging
+import pathlib
 import sqlite3
 import uuid
 from typing import NamedTuple
@@ -20,6 +21,7 @@ def init_db(db_path: str) -> None:
     global _conn
     if _conn is not None:
         _conn.close()
+    pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Opening SQLite database at %s", db_path)
     _conn = sqlite3.connect(db_path, check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")

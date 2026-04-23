@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from interesting import storage
@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Set before mcp.run(); overridden in __main__ when --db or INTERESTING_DB_PATH is provided.
-_db_path: str = os.environ.get("INTERESTING_DB_PATH", "interesting.db")
+_db_path: str = os.environ.get("INTERESTING_DB_PATH", "data/interesting.db")
 
 
 @asynccontextmanager
@@ -50,13 +50,6 @@ def _validate_scope(scope: str) -> None:
         raise ValueError("scope must be 32 characters or fewer")
     if not scope.isascii():
         raise ValueError("scope must be ASCII only")
-
-
-@mcp.tool(description="Verify connectivity with the server.")
-def ping(ctx: Context) -> str:
-    logger.info("ping called")
-    ctx.info("ping called")
-    return "pong"
 
 
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
@@ -103,7 +96,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
-    _db_path = args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db")
+    _db_path = args.db or os.environ.get("INTERESTING_DB_PATH", "data/interesting.db")
 
     logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
     mcp.run(transport=transport)  # type: ignore[arg-type]

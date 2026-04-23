@@ -18,14 +18,6 @@ def isolated_db(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None
     storage.init_db(db_file)
 
 
-async def test_ping_returns_pong() -> None:
-    async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("ping", {})
-    assert not result.isError
-    assert len(result.content) == 1
-    assert result.content[0].text == "pong"  # type: ignore[union-attr]
-
-
 async def test_add_topic_default_scope() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.call_tool("add_topic", {"title": "AI News"})
