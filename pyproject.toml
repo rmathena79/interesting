@@ -1,0 +1,18 @@
+[project]
+name = "interesting"
+version = "0.1.0"
+description = "MCP server for deterministically tracking news stories of interest"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]  # pycodestyle errors, pyflakes, isort
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
