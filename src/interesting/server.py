@@ -1,4 +1,6 @@
+import argparse
 import logging
+import os
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -19,5 +21,15 @@ def ping(ctx: Context) -> str:
 
 
 if __name__ == "__main__":
-    logger.info("Starting interesting MCP server")
-    mcp.run()
+    parser = argparse.ArgumentParser(description="interesting MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default=None,
+        help="Transport to use (overrides MCP_TRANSPORT env var)",
+    )
+    args = parser.parse_args()
+
+    transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
+    logger.info("Starting interesting MCP server with transport=%s", transport)
+    mcp.run(transport=transport)  # type: ignore[arg-type]

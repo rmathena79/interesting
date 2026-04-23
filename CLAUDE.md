@@ -2,14 +2,6 @@
 
 MCP server for deterministically tracking news stories of interest.
 
-## Setup
-
-```
-python -m venv .venv
-source .venv/Scripts/activate  # Windows; use .venv/bin/activate on macOS/Linux
-pip install -r requirements-dev.txt   # installs package as editable + dev tools
-```
-
 ## Commands
 
 | Task       | Command                      |
@@ -21,6 +13,7 @@ pip install -r requirements-dev.txt   # installs package as editable + dev tools
 
 ## Project Guidance
 
+- User-facing documentation (setup, configuration, deployment, environment variables) belongs in README.md, not CLAUDE.md.
 - Ensure tests can be run while production server is running on same system
-- Strict python type enforcement
-- Rigorous logging to console
+- Strict python type annotations throughout
+- Rigorous logging to console (use the module logger pattern in server.py)
