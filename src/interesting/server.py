@@ -84,14 +84,14 @@ def add_topic(title: str, scope: str = "") -> str:
         "Returns tracked topics. "
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
-        "Set for_update=true when calling as part of a news roundup — the server will record "
+        "Set roundup=true when calling as part of a news roundup — the server will record "
         "last_checked_at for each returned topic."
     )
 )
-def list_topics(scope: str = "", for_update: bool = False) -> str:
-    logger.info("list_topics called scope=%r for_update=%r", scope, for_update)
+def list_topics(scope: str = "", roundup: bool = False) -> str:
+    logger.info("list_topics called scope=%r roundup=%r", scope, roundup)
     resolved = scope if scope else None
-    topics = storage.list_topics(scope=resolved, for_update=for_update)
+    topics = storage.list_topics(scope=resolved, roundup=roundup)
     return json.dumps(
         [
             {
@@ -115,6 +115,42 @@ def remove_topic(id: str) -> str:
     if not found:
         raise ValueError(f"topic not found: {id}")
     return "OK"
+
+
+@mcp.tool(
+    description=(
+        "Updates the title and/or scope of an existing topic. "
+        "Pass only the fields you want to change; omit or pass empty string to leave unchanged. "
+        "At least one of title or scope must be provided. "
+        "The topic ID, added_at, and last_checked_at are never changed by this call."
+    )
+)
+def update_topic(id: str, title: str = "", scope: str = "") -> str:
+    logger.info("update_topic called id=%r title=%r scope=%r", id, title, scope)
+    if not id:
+        raise ValueError("id must not be empty")
+    if not title and not scope:
+        raise ValueError("at least one of title or scope must be provided")
+    new_title: str | None = None
+    new_scope: str | None = None
+    if title:
+        _validate_title(title)
+        new_title = title
+    if scope:
+        _validate_scope(scope)
+        new_scope = scope
+    topic = storage.update_topic(id, new_title, new_scope)
+    if topic is None:
+        raise ValueError(f"topic not found: {id}")
+    return json.dumps(
+        {
+            "id": topic.id,
+            "title": topic.title,
+            "scope": topic.scope,
+            "added_at": topic.added_at,
+            "last_checked_at": topic.last_checked_at,
+        }
+    )
 
 
 if __name__ == "__main__":
