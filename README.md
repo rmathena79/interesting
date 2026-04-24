@@ -1,6 +1,10 @@
 # interesting
 MCP server for deterministically tracking news stories of interest
 
+## Usage
+
+[interesting-mcp-reference.md](interesting-mcp-reference.md) documents how chat applications are expected to interact with this server: tool parameters, scope semantics, title conventions, and the operational modes (topic tracking and news roundup) that drive tool calls.
+
 ## Setup
 
 ```

@@ -74,14 +74,36 @@ def add_topic(title: str, scope: str = "") -> str:
     resolved_scope = scope if scope else storage.DEFAULT_SCOPE
     _validate_scope(resolved_scope)
     topic = storage.add_topic(title, resolved_scope)
-    return json.dumps({"id": topic.id, "title": topic.title, "scope": topic.scope})
+    return json.dumps(
+        {"id": topic.id, "title": topic.title, "scope": topic.scope, "added_at": topic.added_at}
+    )
 
 
-@mcp.tool(description="Returns all topics.")
-def list_topics() -> str:
-    logger.info("list_topics called")
-    topics = storage.list_topics()
-    return json.dumps([{"id": t.id, "title": t.title, "scope": t.scope} for t in topics])
+@mcp.tool(
+    description=(
+        "Returns tracked topics. "
+        "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
+        "omit or pass empty string to return all topics regardless of scope. "
+        "Set for_update=true when calling as part of a news roundup — the server will record "
+        "last_checked_at for each returned topic."
+    )
+)
+def list_topics(scope: str = "", for_update: bool = False) -> str:
+    logger.info("list_topics called scope=%r for_update=%r", scope, for_update)
+    resolved = scope if scope else None
+    topics = storage.list_topics(scope=resolved, for_update=for_update)
+    return json.dumps(
+        [
+            {
+                "id": t.id,
+                "title": t.title,
+                "scope": t.scope,
+                "added_at": t.added_at,
+                "last_checked_at": t.last_checked_at,
+            }
+            for t in topics
+        ]
+    )
 
 
 @mcp.tool(description="Removes a topic by ID.")
@@ -111,9 +133,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
-    _db_path = _resolve_db_path(
-        args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db")
-    )
+    _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
 
     logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
     mcp.run(transport=transport)  # type: ignore[arg-type]

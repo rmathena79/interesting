@@ -158,3 +158,97 @@ def test_storage_init_creates_db(tmp_path: pathlib.Path) -> None:
     db_file = tmp_path / "explicit.db"
     storage.init_db(str(db_file))
     assert db_file.exists()
+
+
+# --- Timestamp tests ---
+
+
+async def test_add_topic_returns_added_at() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Timestamped"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["added_at"] is not None
+    assert isinstance(data["added_at"], str)
+
+
+async def test_list_topics_includes_timestamps() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Topic A"})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["added_at"] is not None
+    assert data[0]["last_checked_at"] is None
+
+
+async def test_list_topics_for_update_sets_last_checked() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Topic A"})
+        result = await client.call_tool("list_topics", {"for_update": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["last_checked_at"] is not None
+
+
+async def test_list_topics_no_for_update_leaves_last_checked_null() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Topic A"})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["last_checked_at"] is None
+
+
+# --- Scope filtering tests ---
+
+
+async def test_list_topics_scope_exact() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
+        await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
+        await client.call_tool("add_topic", {"title": "World Story", "scope": "world"})
+        result = await client.call_tool("list_topics", {"scope": "pdx"})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["title"] == "PDX Story"
+
+
+async def test_list_topics_scope_containment_us() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
+        await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
+        await client.call_tool("add_topic", {"title": "World Story", "scope": "world"})
+        result = await client.call_tool("list_topics", {"scope": "us"})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    titles = {t["title"] for t in data}
+    assert titles == {"PDX Story", "US Story"}
+
+
+async def test_list_topics_scope_world_returns_all() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
+        await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
+        await client.call_tool("add_topic", {"title": "World Story", "scope": "world"})
+        result = await client.call_tool("list_topics", {"scope": "world"})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 3
+
+
+async def test_list_topics_no_scope_returns_all() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
+        await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
+        await client.call_tool("add_topic", {"title": "World Story", "scope": "world"})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 3
+
+
+async def test_list_topics_for_update_with_scope_only_updates_filtered() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
+        await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
+        await client.call_tool("list_topics", {"scope": "pdx", "for_update": True})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    by_title = {t["title"]: t for t in data}
+    assert by_title["PDX Story"]["last_checked_at"] is not None
+    assert by_title["US Story"]["last_checked_at"] is None
