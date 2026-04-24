@@ -72,7 +72,7 @@ def add_topic(title: str, scope: str) -> Topic:
     return Topic(id=topic_id, title=title, scope=scope, added_at=added_at, last_checked_at=None)
 
 
-def list_topics(scope: str | None = None, for_update: bool = False) -> list[Topic]:
+def list_topics(scope: str | None = None, roundup: bool = False) -> list[Topic]:
     conn = _get_conn()
     if scope is None or scope == DEFAULT_SCOPE:
         rows = conn.execute(
@@ -86,8 +86,8 @@ def list_topics(scope: str | None = None, for_update: bool = False) -> list[Topi
             f" WHERE scope IN ({placeholders}) ORDER BY title",
             tuple(included),
         ).fetchall()
-    logger.info("Listed %d topics scope=%r for_update=%r", len(rows), scope, for_update)
-    if for_update and rows:
+    logger.info("Listed %d topics scope=%r roundup=%r", len(rows), scope, roundup)
+    if roundup and rows:
         now = datetime.now(timezone.utc).isoformat()
         ids = [row[0] for row in rows]
         placeholders = ",".join("?" * len(ids))
@@ -102,6 +102,34 @@ def list_topics(scope: str | None = None, for_update: bool = False) -> list[Topi
     return [
         Topic(id=r[0], title=r[1], scope=r[2], added_at=r[3], last_checked_at=r[4]) for r in rows
     ]
+
+
+def update_topic(topic_id: str, title: str | None, scope: str | None) -> Topic | None:
+    parts: list[str] = []
+    params: list[str] = []
+    if title is not None:
+        parts.append("title = ?")
+        params.append(title)
+    if scope is not None:
+        parts.append("scope = ?")
+        params.append(scope)
+    # Caller must ensure at least one field is set.
+    params.append(topic_id)
+    conn = _get_conn()
+    cursor = conn.execute(
+        f"UPDATE topics SET {', '.join(parts)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+    if cursor.rowcount == 0:
+        logger.warning("update_topic: id=%s not found", topic_id)
+        return None
+    row = conn.execute(
+        "SELECT id, title, scope, added_at, last_checked_at FROM topics WHERE id = ?",
+        (topic_id,),
+    ).fetchone()
+    logger.info("Updated topic id=%s title=%r scope=%r", topic_id, title, scope)
+    return Topic(id=row[0], title=row[1], scope=row[2], added_at=row[3], last_checked_at=row[4])
 
 
 def remove_topic(topic_id: str) -> bool:

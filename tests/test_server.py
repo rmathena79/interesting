@@ -181,15 +181,15 @@ async def test_list_topics_includes_timestamps() -> None:
     assert data[0]["last_checked_at"] is None
 
 
-async def test_list_topics_for_update_sets_last_checked() -> None:
+async def test_list_topics_roundup_sets_last_checked() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         await client.call_tool("add_topic", {"title": "Topic A"})
-        result = await client.call_tool("list_topics", {"for_update": True})
+        result = await client.call_tool("list_topics", {"roundup": True})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
     assert data[0]["last_checked_at"] is not None
 
 
-async def test_list_topics_no_for_update_leaves_last_checked_null() -> None:
+async def test_list_topics_no_roundup_leaves_last_checked_null() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         await client.call_tool("add_topic", {"title": "Topic A"})
         result = await client.call_tool("list_topics", {})
@@ -242,13 +242,114 @@ async def test_list_topics_no_scope_returns_all() -> None:
     assert len(data) == 3
 
 
-async def test_list_topics_for_update_with_scope_only_updates_filtered() -> None:
+async def test_list_topics_roundup_with_scope_only_updates_filtered() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         await client.call_tool("add_topic", {"title": "PDX Story", "scope": "pdx"})
         await client.call_tool("add_topic", {"title": "US Story", "scope": "us"})
-        await client.call_tool("list_topics", {"scope": "pdx", "for_update": True})
+        await client.call_tool("list_topics", {"scope": "pdx", "roundup": True})
         result = await client.call_tool("list_topics", {})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
     by_title = {t["title"]: t for t in data}
     assert by_title["PDX Story"]["last_checked_at"] is not None
     assert by_title["US Story"]["last_checked_at"] is None
+
+
+# --- update_topic tests ---
+
+
+async def test_update_topic_title() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Old Title", "scope": "us"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "title": "New Title"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["title"] == "New Title"
+    assert data["scope"] == "us"
+    assert data["id"] == topic_id
+
+
+async def test_update_topic_scope() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic", "scope": "us"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "scope": "pdx"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["scope"] == "pdx"
+    assert data["title"] == "My Topic"
+    assert data["id"] == topic_id
+
+
+async def test_update_topic_both() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Old Title", "scope": "us"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "title": "New Title", "scope": "pdx"}
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["title"] == "New Title"
+    assert data["scope"] == "pdx"
+
+
+async def test_update_topic_preserves_timestamps() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic", "scope": "us"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        added_at = json.loads(add_result.content[0].text)["added_at"]  # type: ignore[union-attr]
+        await client.call_tool("list_topics", {"roundup": True})
+        list_result = await client.call_tool("list_topics", {})
+        last_checked = json.loads(list_result.content[0].text)[0]["last_checked_at"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "title": "Updated Title"})
+        final_result = await client.call_tool("list_topics", {})
+    data = json.loads(final_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["added_at"] == added_at
+    assert data[0]["last_checked_at"] == last_checked
+
+
+async def test_update_topic_reflected_in_list() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Old Title", "scope": "us"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "title": "New Title"})
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["title"] == "New Title"
+
+
+async def test_update_topic_not_found_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "no-such-id", "title": "X"})
+    assert result.isError
+
+
+async def test_update_topic_empty_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "", "title": "X"})
+    assert result.isError
+
+
+async def test_update_topic_no_fields_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id})
+    assert result.isError
+
+
+async def test_update_topic_invalid_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "title": "Café"})
+    assert result.isError
+
+
+async def test_update_topic_invalid_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "scope": "s" * 33})
+    assert result.isError
