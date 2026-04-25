@@ -254,6 +254,56 @@ async def test_list_topics_roundup_with_scope_only_updates_filtered() -> None:
     assert by_title["US Story"]["last_checked_at"] is None
 
 
+# --- Rotation / limit tests ---
+
+
+async def test_roundup_returns_at_most_limit() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 6
+
+
+async def test_non_roundup_returns_all_when_over_limit() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 8
+
+
+async def test_roundup_unchecked_topics_returned_before_checked() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        # First roundup checks 6 topics; 2 remain unchecked.
+        await client.call_tool("list_topics", {"roundup": True})
+        all_result = await client.call_tool("list_topics", {})
+        all_topics = json.loads(all_result.content[0].text)  # type: ignore[union-attr]
+        unchecked_ids = {t["id"] for t in all_topics if t["last_checked_at"] is None}
+        assert len(unchecked_ids) == 2
+        # Second roundup must include both unchecked topics.
+        second_result = await client.call_tool("list_topics", {"roundup": True})
+    second_data = json.loads(second_result.content[0].text)  # type: ignore[union-attr]
+    returned_ids = {t["id"] for t in second_data}
+    assert unchecked_ids.issubset(returned_ids)
+
+
+async def test_roundup_under_limit_returns_all() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(4):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 4
+
+
 # --- update_topic tests ---
 
 

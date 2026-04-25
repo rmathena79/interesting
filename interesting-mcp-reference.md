@@ -63,7 +63,11 @@ Confirm addition briefly to the user, including the scope so they can correct it
 ### `list_topics`
 Parameters:
 - `scope` (string, optional): If provided, returns only topics whose stored scope equals the requested scope or is contained within it (see Filtering rule above). Omit or pass empty string to return all topics.
-- `roundup` (boolean, optional, default `false`): Set to `true` when calling as part of a news roundup. The server records `last_checked_at` for every returned topic.
+- `roundup` (boolean, optional, default `false`): Set to `true` when calling as part of a news roundup. See rotation behavior below.
+
+**Without `roundup=true`:** Returns all matching topics sorted by title.
+
+**With `roundup=true` (rotation mode):** Returns at most 6 topics, prioritizing those least recently checked — topics with `last_checked_at = null` first, then oldest checked, with random tiebreaking among equals. The server records `last_checked_at` for every returned topic. This ensures that over successive roundup calls, all tracked topics are visited in rotation rather than the same topics being returned every time.
 
 Returns: JSON array of `{id, title, scope, added_at, last_checked_at}` objects. Empty array if nothing is tracked.
 - `added_at`: ISO 8601 UTC timestamp set when the topic was added; `null` for topics added before this field existed.
@@ -121,7 +125,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | timeframe | `Xh` or `Xd` (hours/days) | `48h` |
 
 **Workflow:**
-1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve tracked stories filtered to the requested scope. The server applies the containment rule (see Filtering rule above) and records `last_checked_at` for each returned topic.
+1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns at most 6 topics (those least recently checked), applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup — this is by design.
 2. Search for new developments on each returned tracked topic within the requested timeframe.
 4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
 5. Search for additional stories matching the requested scope and user interest profile.

@@ -8,6 +8,7 @@ from typing import NamedTuple
 logger = logging.getLogger(__name__)
 
 DEFAULT_SCOPE = "world"
+_ROUNDUP_LIMIT = 6
 
 # Maps a requested scope to the set of stored scopes it includes.
 # DEFAULT_SCOPE ("world") is not listed — it means no filter (return all topics).
@@ -75,24 +76,32 @@ def add_topic(title: str, scope: str) -> Topic:
 def list_topics(scope: str | None = None, roundup: bool = False) -> list[Topic]:
     conn = _get_conn()
     if scope is None or scope == DEFAULT_SCOPE:
-        rows = conn.execute(
-            "SELECT id, title, scope, added_at, last_checked_at FROM topics ORDER BY title"
-        ).fetchall()
+        where_clause = ""
+        params: list[str] = []
     else:
         included = _CONTAINED_SCOPES.get(scope, {scope})
         placeholders = ",".join("?" * len(included))
-        rows = conn.execute(
-            f"SELECT id, title, scope, added_at, last_checked_at FROM topics"
-            f" WHERE scope IN ({placeholders}) ORDER BY title",
-            tuple(included),
-        ).fetchall()
+        where_clause = f" WHERE scope IN ({placeholders})"
+        params = list(included)
+
+    if roundup:
+        order_limit = f" ORDER BY last_checked_at ASC, RANDOM() LIMIT {_ROUNDUP_LIMIT}"
+    else:
+        order_limit = " ORDER BY title"
+
+    rows = conn.execute(
+        "SELECT id, title, scope, added_at, last_checked_at FROM topics"
+        f"{where_clause}{order_limit}",
+        params,
+    ).fetchall()
     logger.info("Listed %d topics scope=%r roundup=%r", len(rows), scope, roundup)
+
     if roundup and rows:
         now = datetime.now(timezone.utc).isoformat()
         ids = [row[0] for row in rows]
-        placeholders = ",".join("?" * len(ids))
+        id_placeholders = ",".join("?" * len(ids))
         conn.execute(
-            f"UPDATE topics SET last_checked_at = ? WHERE id IN ({placeholders})",
+            f"UPDATE topics SET last_checked_at = ? WHERE id IN ({id_placeholders})",
             [now, *ids],
         )
         conn.commit()
