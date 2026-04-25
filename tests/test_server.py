@@ -3,6 +3,7 @@ import pathlib
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
+from pydantic import AnyUrl
 
 import interesting.server as server_module
 from interesting import storage
@@ -353,3 +354,15 @@ async def test_update_topic_invalid_scope_fails() -> None:
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
         result = await client.call_tool("update_topic", {"id": topic_id, "scope": "s" * 33})
     assert result.isError
+
+
+# --- Resource tests ---
+
+
+async def test_instructions_resource_returns_text() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.read_resource(AnyUrl("interesting://instructions"))
+    assert len(result.contents) == 1
+    text = result.contents[0].text  # type: ignore[union-attr]
+    assert isinstance(text, str)
+    assert text
