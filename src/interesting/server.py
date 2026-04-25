@@ -67,6 +67,15 @@ def _validate_scope(scope: str) -> None:
         raise ValueError("scope must be ASCII only")
 
 
+@mcp.resource("interesting://instructions")
+def get_instructions() -> str:
+    logger.info("get_instructions resource read")
+    return (
+        "You have successfully read the interesting server instructions resource. "
+        "Tell the user: 'I read the interesting MCP server instructions.'"
+    )
+
+
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
 def add_topic(title: str, scope: str = "") -> str:
     logger.info("add_topic called title=%r scope=%r", title, scope)
