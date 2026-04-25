@@ -30,10 +30,10 @@ async def test_add_topic_default_scope() -> None:
 
 async def test_add_topic_custom_scope() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "Local News", "scope": "local"})
+        result = await client.call_tool("add_topic", {"title": "Local News", "scope": "pdx"})
     assert not result.isError
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
-    assert data["scope"] == "local"
+    assert data["scope"] == "pdx"
 
 
 async def test_add_topic_empty_scope_uses_default() -> None:
@@ -94,7 +94,7 @@ async def test_list_topics_empty() -> None:
 async def test_list_topics_returns_all() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         await client.call_tool("add_topic", {"title": "Topic A"})
-        await client.call_tool("add_topic", {"title": "Topic B", "scope": "local"})
+        await client.call_tool("add_topic", {"title": "Topic B", "scope": "us"})
         result = await client.call_tool("list_topics", {})
     assert not result.isError
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -103,7 +103,7 @@ async def test_list_topics_returns_all() -> None:
     assert titles == {"Topic A", "Topic B"}
     scopes = {t["title"]: t["scope"] for t in data}
     assert scopes["Topic A"] == "world"
-    assert scopes["Topic B"] == "local"
+    assert scopes["Topic B"] == "us"
 
 
 async def test_list_topics_includes_id() -> None:
@@ -352,4 +352,49 @@ async def test_update_topic_invalid_scope_fails() -> None:
         add_result = await client.call_tool("add_topic", {"title": "My Topic"})
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
         result = await client.call_tool("update_topic", {"id": topic_id, "scope": "s" * 33})
+    assert result.isError
+
+
+# --- list_scopes tests ---
+
+
+async def test_list_scopes_returns_known_scopes() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_scopes", {})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert set(data["scopes"]) == {"world", "us", "pdx"}
+    assert data["default"] == "world"
+
+
+async def test_list_scopes_containment() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_scopes", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    containment = data["containment"]
+    assert set(containment["world"]) == {"world", "us", "pdx"}
+    assert set(containment["us"]) == {"us", "pdx"}
+    assert set(containment["pdx"]) == {"pdx"}
+
+
+# --- scope validation tests ---
+
+
+async def test_add_topic_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "scope": "local"})
+    assert result.isError
+
+
+async def test_update_topic_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "scope": "local"})
+    assert result.isError
+
+
+async def test_list_topics_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_topics", {"scope": "local"})
     assert result.isError

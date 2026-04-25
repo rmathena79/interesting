@@ -24,3 +24,11 @@ select = ["E", "F", "I"]  # pycodestyle errors, pyflakes, isort
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 anyio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.13.0",
+    "pytest>=9.0.3",
+    "pytest-anyio>=0.0.0",
+    "ruff>=0.15.12",
+]
