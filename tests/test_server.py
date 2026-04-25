@@ -365,4 +365,17 @@ async def test_instructions_resource_returns_text() -> None:
     assert len(result.contents) == 1
     text = result.contents[0].text  # type: ignore[union-attr]
     assert isinstance(text, str)
-    assert text
+    assert len(text) > 100
+    for keyword in ("add_topic", "list_topics", "update_topic", "remove_topic", "scope", "roundup"):
+        assert keyword in text, f"instructions missing expected keyword: {keyword!r}"
+
+
+async def test_instructions_resource_covers_roundup_workflow() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.read_resource(AnyUrl("interesting://instructions"))
+    text = result.contents[0].text  # type: ignore[union-attr]
+    assert "pdx" in text                               # scope hierarchy
+    assert "128" in text                               # title max-length rule
+    assert "last_checked_at" in text                   # roundup semantics
+    assert "news" in text                              # roundup trigger
+    assert "OpenAI" in text or "Bondi" in text         # concrete title example
