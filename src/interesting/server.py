@@ -61,10 +61,26 @@ def _validate_title(title: str) -> None:
 
 
 def _validate_scope(scope: str) -> None:
-    if len(scope) > 32:
-        raise ValueError("scope must be 32 characters or fewer")
-    if not scope.isascii():
-        raise ValueError("scope must be ASCII only")
+    if scope not in storage.KNOWN_SCOPES:
+        raise ValueError(f"unknown scope {scope!r}; call list_scopes for valid options")
+
+
+@mcp.tool(
+    description=(
+        "Returns the valid scopes and their containment relationships. "
+        "Call this to discover which scope values are accepted by add_topic, update_topic, "
+        "and list_topics."
+    )
+)
+def list_scopes() -> str:
+    logger.info("list_scopes called")
+    return json.dumps(
+        {
+            "scopes": sorted(storage.KNOWN_SCOPES),
+            "default": storage.DEFAULT_SCOPE,
+            "containment": storage.get_scope_hierarchy(),
+        }
+    )
 
 
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
@@ -87,11 +103,14 @@ def add_topic(title: str, scope: str = "") -> str:
         "Set roundup=true when calling as part of a news roundup — the server returns at most "
         "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
         "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
-        "Without roundup=true, all matching topics are returned sorted by title."
+        "Without roundup=true, all matching topics are returned sorted by title. "
+        "Use list_scopes to see valid scope values."
     )
 )
 def list_topics(scope: str = "", roundup: bool = False) -> str:
     logger.info("list_topics called scope=%r roundup=%r", scope, roundup)
+    if scope:
+        _validate_scope(scope)
     resolved = scope if scope else None
     topics = storage.list_topics(scope=resolved, roundup=roundup)
     return json.dumps(

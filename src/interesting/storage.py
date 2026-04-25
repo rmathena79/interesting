@@ -17,6 +17,17 @@ _CONTAINED_SCOPES: dict[str, set[str]] = {
     "pdx": {"pdx"},
 }
 
+KNOWN_SCOPES: frozenset[str] = frozenset({DEFAULT_SCOPE} | set(_CONTAINED_SCOPES.keys()))
+
+
+def get_scope_hierarchy() -> dict[str, list[str]]:
+    """Returns each scope mapped to the stored scopes included when filtering by it."""
+    result: dict[str, list[str]] = {DEFAULT_SCOPE: sorted(KNOWN_SCOPES)}
+    for scope, included in _CONTAINED_SCOPES.items():
+        result[scope] = sorted(included)
+    return result
+
+
 _conn: sqlite3.Connection | None = None
 
 
