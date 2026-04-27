@@ -8,14 +8,13 @@ MCP server for deterministically tracking news stories of interest
 ## Claude Project Setup
 
 When Claude connects to this server, it should read the `interesting://instructions`
-resource at the start of each session. The resource returns plain-text usage instructions
+resource, or call get_instructions(), at the start of each session. The resource returns plain-text usage instructions
 covering all tools, scope semantics, title conventions, and the news roundup workflow —
 the machine-readable equivalent of [interesting-mcp-reference.md](interesting-mcp-reference.md).
 
 Add a project instruction such as:
 
-> At the start of each conversation, read the `interesting://instructions` MCP resource
-> for usage instructions before calling any tools.
+> At the start of each conversation, call the get_intructions function on the Interesting MCP server before calling any tools.
 
 ## Setup
 
