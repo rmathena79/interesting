@@ -83,6 +83,27 @@ def list_scopes() -> str:
     )
 
 
+_REFERENCE_DOC = pathlib.Path(__file__).parents[2] / "interesting-mcp-reference.md"
+
+
+@mcp.resource("interesting://instructions")
+def get_instructions() -> str:
+    logger.info("get_instructions resource read")
+    return _REFERENCE_DOC.read_text(encoding="utf-8")
+
+
+@mcp.tool(
+    description=(
+        "Returns usage instructions for this MCP server: tool reference, scope semantics, "
+        "title conventions, and operational workflows. Call this at the start of a session "
+        "before using any other tools."
+    )
+)
+def get_instructions_tool() -> str:
+    logger.info("get_instructions_tool called")
+    return _REFERENCE_DOC.read_text(encoding="utf-8")
+
+
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
 def add_topic(title: str, scope: str = "") -> str:
     logger.info("add_topic called title=%r scope=%r", title, scope)

@@ -5,6 +5,18 @@ MCP server for deterministically tracking news stories of interest
 
 [interesting-mcp-reference.md](interesting-mcp-reference.md) documents how chat applications are expected to interact with this server: tool parameters, scope semantics, title conventions, and the operational modes (topic tracking and news roundup) that drive tool calls.
 
+## Claude Project Setup
+
+When Claude connects to this server, it should read the `interesting://instructions`
+resource at the start of each session. The resource returns plain-text usage instructions
+covering all tools, scope semantics, title conventions, and the news roundup workflow —
+the machine-readable equivalent of [interesting-mcp-reference.md](interesting-mcp-reference.md).
+
+Add a project instruction such as:
+
+> At the start of each conversation, read the `interesting://instructions` MCP resource
+> for usage instructions before calling any tools.
+
 ## Setup
 
 ```

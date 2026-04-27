@@ -3,6 +3,7 @@ import pathlib
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
+from pydantic import AnyUrl
 
 import interesting.server as server_module
 from interesting import storage
@@ -448,3 +449,39 @@ async def test_list_topics_unknown_scope_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.call_tool("list_topics", {"scope": "local"})
     assert result.isError
+
+
+# --- Resource tests ---
+
+
+async def test_instructions_resource_returns_text() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.read_resource(AnyUrl("interesting://instructions"))
+    assert len(result.contents) == 1
+    text = result.contents[0].text  # type: ignore[union-attr]
+    assert isinstance(text, str)
+    assert len(text) > 100
+    for keyword in ("add_topic", "list_scopes", "list_topics", "update_topic", "remove_topic",
+                    "scope", "roundup"):
+        assert keyword in text, f"instructions missing expected keyword: {keyword!r}"
+
+
+async def test_instructions_resource_covers_roundup_workflow() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.read_resource(AnyUrl("interesting://instructions"))
+    text = result.contents[0].text  # type: ignore[union-attr]
+    assert "pdx" in text                               # scope hierarchy
+    assert "128" in text                               # title max-length rule
+    assert "last_checked_at" in text                   # roundup semantics
+    assert "news" in text                              # roundup trigger
+    assert "OpenAI" in text or "Bondi" in text         # concrete title example
+
+
+async def test_get_instructions_tool_returns_same_content() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        tool_result = await client.call_tool("get_instructions_tool", {})
+        resource_result = await client.read_resource(AnyUrl("interesting://instructions"))
+    assert not tool_result.isError
+    tool_text = tool_result.content[0].text  # type: ignore[union-attr]
+    resource_text = resource_result.contents[0].text  # type: ignore[union-attr]
+    assert tool_text == resource_text
