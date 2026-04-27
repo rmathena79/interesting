@@ -1,6 +1,8 @@
 # interesting
 MCP server for deterministically tracking news stories of interest
 
+For technical description of the project, see `OVERVIEW.md`.
+
 ## Usage
 
 [interesting-mcp-reference.md](interesting-mcp-reference.md) documents how chat applications are expected to interact with this server: tool parameters, scope semantics, title conventions, and the operational modes (topic tracking and news roundup) that drive tool calls.
@@ -8,20 +10,21 @@ MCP server for deterministically tracking news stories of interest
 ## Claude Project Setup
 
 When Claude connects to this server, it should read the `interesting://instructions`
-resource, or call get_instructions(), at the start of each session. The resource returns plain-text usage instructions
+resource, or call `get_instructions_tool`, at the start of each session. The resource returns plain-text usage instructions
 covering all tools, scope semantics, title conventions, and the news roundup workflow —
 the machine-readable equivalent of [interesting-mcp-reference.md](interesting-mcp-reference.md).
 
 Add a project instruction such as:
 
-> At the start of each conversation, call the get_intructions function on the Interesting MCP server before calling any tools.
+> At the start of each conversation, call the get_instructions_tool function on the Interesting MCP server before calling any tools.
 
 ## Setup
 
 ```
 python -m venv .venv
 source .venv/Scripts/activate  # Windows; use .venv/bin/activate on macOS/Linux
-pip install -r requirements-dev.txt   # installs package as editable + dev tools
+pip install -e .                # installs the package and its runtime dependency
+pip install pytest anyio pytest-anyio ruff  # dev tools (see [dependency-groups] in pyproject.toml)
 ```
 
 ## Launching the MCP Server
@@ -74,6 +77,8 @@ connect via streamable HTTP:
 |---|---|---|
 | `--transport` | `stdio` | Transport to use: `stdio` or `streamable-http` |
 | `--db` | `data/interesting.db` | Path to the SQLite database file |
+
+Note the database path is relative to the 'data' directory.
 
 ### Environment Variables
 

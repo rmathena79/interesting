@@ -1,5 +1,7 @@
 import pathlib
 
+import pytest
+
 from interesting.server import _resolve_db_path
 
 
@@ -39,3 +41,18 @@ def test_mixed_slashes() -> None:
 
 def test_deep_path() -> None:
     assert p(_resolve_db_path("a/b/c/d.db")) == p("data/a/b/c/d.db")
+
+
+def test_absolute_unix_path_raises() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        _resolve_db_path("/data/foo.db")
+
+
+def test_absolute_windows_path_raises() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        _resolve_db_path("C:/data/foo.db")
+
+
+def test_absolute_windows_backslash_raises() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        _resolve_db_path("C:\\data\\foo.db")

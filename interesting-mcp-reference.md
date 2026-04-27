@@ -78,7 +78,7 @@ Parameters:
 - `title` (string, required): ASCII, non-empty, max 128 chars.
 - `scope` (string, optional): Must be a known scope (see `list_scopes`). Defaults to `"world"`. Pick the narrowest known scope that contains the story.
 
-Returns: `{"id": "...", "title": "...", "scope": "...", "added_at": "..."}`
+Returns: `{"id": "...", "title": "...", "scope": "...", "added_at": "...", "last_checked_at": null}`
 
 Confirm addition briefly to the user, including the scope so they can correct it. Do not surface the UUID unless asked.
 
@@ -149,8 +149,8 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 **Workflow:**
 1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns at most 6 topics (those least recently checked), applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup — this is by design.
 2. Search for new developments on each returned tracked topic within the requested timeframe.
-4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
-5. Search for additional stories matching the requested scope and user interest profile.
-6. Use the `recent_chats` tool (if available) to avoid re-presenting stories already covered; if there is no new information, omit the story entirely.
+3. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
+4. Search for additional stories matching the requested scope and user interest profile.
+5. Use the `recent_chats` tool (if available) to avoid re-presenting stories already covered; if there is no new information, omit the story entirely.
 
 The tracked topic list is the source of truth for follow-up stories. Do not use `recent_chats` or conversation memory alone to reconstruct what the user cares about across sessions.

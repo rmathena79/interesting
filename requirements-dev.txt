@@ -1,5 +1,0 @@
--r requirements.txt
--e .
-pytest>=8.0
-anyio[trio]>=4.0
-ruff>=0.4

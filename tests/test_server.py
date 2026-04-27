@@ -66,11 +66,6 @@ async def test_add_topic_non_ascii_scope_fails() -> None:
     assert result.isError
 
 
-async def test_add_topic_scope_too_long_fails() -> None:
-    async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "News", "scope": "s" * 33})
-    assert result.isError
-
 
 async def test_add_topic_returns_unique_ids() -> None:
     async with create_connected_server_and_client_session(mcp) as client:

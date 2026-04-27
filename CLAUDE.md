@@ -2,6 +2,10 @@
 
 MCP server for deterministically tracking news stories of interest.
 
+## Prime Directive
+
+Always read `OVERVIEW.md` before beginning work.
+
 ## Commands
 
 | Task       | Command                      |
@@ -19,3 +23,4 @@ MCP server for deterministically tracking news stories of interest.
 - Rigorous logging to console (use the module logger pattern in server.py)
 - All log output must be timestamped
 - When adding or changing tools, update `interesting-mcp-reference.md` to match — it is the single source of truth for the `interesting://instructions` MCP resource and for human reference
+- After changing code, check whether `OVERVIEW.md` needs to be updated and do so if necessary.

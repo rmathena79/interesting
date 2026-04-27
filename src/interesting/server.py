@@ -27,9 +27,11 @@ def _resolve_db_path(name: str) -> str:
 
     Both forward and backward slashes are treated as path separators so that
     Windows-style paths work on any platform, including when passed through
-    JSON configs where backslash escaping may vary.
+    JSON configs where backslash escaping may vary. Absolute paths are rejected.
     """
     normalized = name.replace("\\", "/")
+    if pathlib.PurePosixPath(normalized).is_absolute() or pathlib.PureWindowsPath(normalized).is_absolute():
+        raise ValueError(f"absolute paths are not supported; pass a filename or relative path (got {name!r})")
     return str(pathlib.Path(_DATA_DIR) / normalized)
 
 
