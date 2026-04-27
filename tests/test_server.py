@@ -475,3 +475,13 @@ async def test_instructions_resource_covers_roundup_workflow() -> None:
     assert "last_checked_at" in text                   # roundup semantics
     assert "news" in text                              # roundup trigger
     assert "OpenAI" in text or "Bondi" in text         # concrete title example
+
+
+async def test_get_instructions_tool_returns_same_content() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        tool_result = await client.call_tool("get_instructions_tool", {})
+        resource_result = await client.read_resource(AnyUrl("interesting://instructions"))
+    assert not tool_result.isError
+    tool_text = tool_result.content[0].text  # type: ignore[union-attr]
+    resource_text = resource_result.contents[0].text  # type: ignore[union-attr]
+    assert tool_text == resource_text

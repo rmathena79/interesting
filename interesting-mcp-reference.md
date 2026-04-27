@@ -51,6 +51,12 @@ If you are unsure, ask the user or default to `world` and let them correct it.
 
 ## Tool reference
 
+### `get_instructions_tool`
+Parameters: none.
+
+Returns the full text of this document. Call this at the start of a session to load
+usage instructions before calling any other tools.
+
 ### `list_scopes`
 Parameters: none.
 
