@@ -100,8 +100,10 @@ def add_topic(title: str, scope: str = "") -> str:
         "Returns tracked topics. "
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
-        "Set roundup=true when calling as part of a news roundup — the server will record "
-        "last_checked_at for each returned topic. "
+        "Set roundup=true when calling as part of a news roundup — the server returns at most "
+        "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
+        "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
+        "Without roundup=true, all matching topics are returned sorted by title. "
         "Use list_scopes to see valid scope values."
     )
 )
