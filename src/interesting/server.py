@@ -61,129 +61,35 @@ def _validate_title(title: str) -> None:
 
 
 def _validate_scope(scope: str) -> None:
-    if len(scope) > 32:
-        raise ValueError("scope must be 32 characters or fewer")
-    if not scope.isascii():
-        raise ValueError("scope must be ASCII only")
+    if scope not in storage.KNOWN_SCOPES:
+        raise ValueError(f"unknown scope {scope!r}; call list_scopes for valid options")
 
 
-_INSTRUCTIONS = """\
-interesting MCP Server — Usage Instructions
+@mcp.tool(
+    description=(
+        "Returns the valid scopes and their containment relationships. "
+        "Call this to discover which scope values are accepted by add_topic, update_topic, "
+        "and list_topics."
+    )
+)
+def list_scopes() -> str:
+    logger.info("list_scopes called")
+    return json.dumps(
+        {
+            "scopes": sorted(storage.KNOWN_SCOPES),
+            "default": storage.DEFAULT_SCOPE,
+            "containment": storage.get_scope_hierarchy(),
+        }
+    )
 
-OVERVIEW
-The interesting server provides persistent, cross-session tracking of news topics.
-Use it to record stories the user wants to follow and to drive news roundups.
 
-TOOLS
-
-`add_topic(title, scope="")`
-  Returns: {"id": "...", "title": "...", "scope": "...", "added_at": "..."}
-  - `title` (required): ASCII only, non-empty, max 128 characters. Must name the
-    specific story or event — not a subject area, person, or vague description.
-  - `scope` (optional): ASCII only, max 32 characters. Defaults to "world". Pick
-    the narrowest known scope that contains the story.
-  After adding, confirm the scope to the user so they can correct it. Do not
-  surface the UUID unless asked.
-
-`list_topics(scope="", roundup=False)`
-  Returns: JSON array of {id, title, scope, added_at, last_checked_at}
-  - `scope`: filters by containment hierarchy (see SCOPE HIERARCHY). Omit or pass
-    empty string to return all topics regardless of scope.
-  - `roundup`: set to true when calling as part of a news roundup; the server
-    records `last_checked_at` for each returned topic.
-  - `last_checked_at`: ISO 8601 UTC timestamp of the last roundup=true call that
-    included this topic. Records when the topic was last queried in a roundup —
-    NOT whether new information was found. A recent timestamp does not mean the
-    topic is fully up to date.
-  - `added_at`: ISO 8601 UTC timestamp set when the topic was added; null for
-    topics added before this field existed.
-
-`update_topic(id, title="", scope="")`
-  Returns: {id, title, scope, added_at, last_checked_at} reflecting updated state.
-  - At least one of `title` or `scope` must be provided.
-  - `added_at` and `last_checked_at` are never modified by this call.
-  - Same format rules as `add_topic` apply to title and scope.
-
-`remove_topic(id)`
-  Returns: "OK" on success. Error if the ID is not found.
-  - To remove by user description, call `list_topics` first to find the match.
-  - If multiple topics could match, ask the user which to remove rather than
-    guessing. If none match, say so — do not invent an ID.
-
-SCOPE HIERARCHY
-
-Scopes form a containment tree. Narrower scopes are contained within broader ones:
-
-    world   -> everything (international, cross-border)
-      us    -> United States
-        pdx -> Portland, Oregon
-
-Filtering rule — when listing for a requested scope, include topics whose stored
-scope equals the request OR is contained within it:
-    request "pdx"   -> include: pdx
-    request "us"    -> include: us, pdx
-    request "world" -> include: world, us, pdx
-
-When choosing scope for a new topic, pick the narrowest that fits. A Portland city
-council vote is "pdx", a federal subpoena is "us", a foreign conflict is "world".
-Scope strings are stored verbatim; spelling and case must be consistent ("US" and
-"us" will not match — prefer lowercase). If unsure, default to "world" and let the
-user correct it.
-
-TITLE CONVENTIONS
-
-A topic title must be distinctive and useful as an LLM search query.
-
-Good:
-  "Bondi subpoenaed about Epstein files"
-  "Warhammer 40K 11th edition release"
-  "OpenAI vs NYT copyright lawsuit"
-
-Bad:
-  "Politics"            (subject area, not a story)
-  "Trump"               (person, not a story)
-  "NYT article on AI"   (single article, not an ongoing story)
-  "that crypto thing"   (not searchable)
-
-Include distinctive nouns, entities, or events. Vague phrasing degrades results.
-
-OPERATIONAL MODES
-
-Topic Tracking
-  Map natural language to tools:
-  - "track X" / "follow up on X" / "keep an eye on X"  -> add_topic
-  - "what am I tracking?" / "show my topics"            -> list_topics (no args)
-  - "stop tracking X" / "drop X" / "remove X"          -> remove_topic
-    (call list_topics first to resolve the ID; ask if ambiguous)
-
-News Roundup
-  Trigger: "news [scope] [timeframe]"  (defaults: scope=us, timeframe=48h)
-
-  Workflow:
-  1. Call list_topics(scope=<requested_scope>, roundup=True) to get topics filtered
-     by the containment hierarchy. The server records last_checked_at for each.
-  2. Search for new developments on each returned topic within the timeframe.
-  3. For topics with no significant new development, skip rather than re-summarizing.
-  4. For topics with material updates, present the update and context — not a recap.
-  5. Search for additional stories matching the requested scope and user interests.
-  6. Use the `recent_chats` tool (if available) to avoid re-presenting old stories.
-
-  The tracked topic list is the source of truth for follow-up stories. Do not rely
-  on conversation memory alone to reconstruct what the user cares about.
-
-NOTES
-  - IDs are server-generated UUIDs. Always copy them from tool output; never
-    construct or guess one.
-  - An empty topic list is valid. Do not fabricate entries.
-  - If a call fails unexpectedly, report the error to the user rather than retrying
-    silently or substituting a different action.
-"""
+_REFERENCE_DOC = pathlib.Path(__file__).parents[2] / "interesting-mcp-reference.md"
 
 
 @mcp.resource("interesting://instructions")
 def get_instructions() -> str:
     logger.info("get_instructions resource read")
-    return _INSTRUCTIONS
+    return _REFERENCE_DOC.read_text(encoding="utf-8")
 
 
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
@@ -203,12 +109,17 @@ def add_topic(title: str, scope: str = "") -> str:
         "Returns tracked topics. "
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
-        "Set roundup=true when calling as part of a news roundup — the server will record "
-        "last_checked_at for each returned topic."
+        "Set roundup=true when calling as part of a news roundup — the server returns at most "
+        "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
+        "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
+        "Without roundup=true, all matching topics are returned sorted by title. "
+        "Use list_scopes to see valid scope values."
     )
 )
 def list_topics(scope: str = "", roundup: bool = False) -> str:
     logger.info("list_topics called scope=%r roundup=%r", scope, roundup)
+    if scope:
+        _validate_scope(scope)
     resolved = scope if scope else None
     topics = storage.list_topics(scope=resolved, roundup=roundup)
     return json.dumps(

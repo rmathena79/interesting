@@ -31,10 +31,10 @@ async def test_add_topic_default_scope() -> None:
 
 async def test_add_topic_custom_scope() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "Local News", "scope": "local"})
+        result = await client.call_tool("add_topic", {"title": "Local News", "scope": "pdx"})
     assert not result.isError
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
-    assert data["scope"] == "local"
+    assert data["scope"] == "pdx"
 
 
 async def test_add_topic_empty_scope_uses_default() -> None:
@@ -95,7 +95,7 @@ async def test_list_topics_empty() -> None:
 async def test_list_topics_returns_all() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         await client.call_tool("add_topic", {"title": "Topic A"})
-        await client.call_tool("add_topic", {"title": "Topic B", "scope": "local"})
+        await client.call_tool("add_topic", {"title": "Topic B", "scope": "us"})
         result = await client.call_tool("list_topics", {})
     assert not result.isError
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -104,7 +104,7 @@ async def test_list_topics_returns_all() -> None:
     assert titles == {"Topic A", "Topic B"}
     scopes = {t["title"]: t["scope"] for t in data}
     assert scopes["Topic A"] == "world"
-    assert scopes["Topic B"] == "local"
+    assert scopes["Topic B"] == "us"
 
 
 async def test_list_topics_includes_id() -> None:
@@ -255,6 +255,56 @@ async def test_list_topics_roundup_with_scope_only_updates_filtered() -> None:
     assert by_title["US Story"]["last_checked_at"] is None
 
 
+# --- Rotation / limit tests ---
+
+
+async def test_roundup_returns_at_most_limit() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 6
+
+
+async def test_non_roundup_returns_all_when_over_limit() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 8
+
+
+async def test_roundup_unchecked_topics_returned_before_checked() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(8):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        # First roundup checks 6 topics; 2 remain unchecked.
+        await client.call_tool("list_topics", {"roundup": True})
+        all_result = await client.call_tool("list_topics", {})
+        all_topics = json.loads(all_result.content[0].text)  # type: ignore[union-attr]
+        unchecked_ids = {t["id"] for t in all_topics if t["last_checked_at"] is None}
+        assert len(unchecked_ids) == 2
+        # Second roundup must include both unchecked topics.
+        second_result = await client.call_tool("list_topics", {"roundup": True})
+    second_data = json.loads(second_result.content[0].text)  # type: ignore[union-attr]
+    returned_ids = {t["id"] for t in second_data}
+    assert unchecked_ids.issubset(returned_ids)
+
+
+async def test_roundup_under_limit_returns_all() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(4):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 4
+
+
 # --- update_topic tests ---
 
 
@@ -356,6 +406,51 @@ async def test_update_topic_invalid_scope_fails() -> None:
     assert result.isError
 
 
+# --- list_scopes tests ---
+
+
+async def test_list_scopes_returns_known_scopes() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_scopes", {})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert set(data["scopes"]) == {"world", "us", "pdx"}
+    assert data["default"] == "world"
+
+
+async def test_list_scopes_containment() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_scopes", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    containment = data["containment"]
+    assert set(containment["world"]) == {"world", "us", "pdx"}
+    assert set(containment["us"]) == {"us", "pdx"}
+    assert set(containment["pdx"]) == {"pdx"}
+
+
+# --- scope validation tests ---
+
+
+async def test_add_topic_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "scope": "local"})
+    assert result.isError
+
+
+async def test_update_topic_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "scope": "local"})
+    assert result.isError
+
+
+async def test_list_topics_unknown_scope_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("list_topics", {"scope": "local"})
+    assert result.isError
+
+
 # --- Resource tests ---
 
 
@@ -366,7 +461,8 @@ async def test_instructions_resource_returns_text() -> None:
     text = result.contents[0].text  # type: ignore[union-attr]
     assert isinstance(text, str)
     assert len(text) > 100
-    for keyword in ("add_topic", "list_topics", "update_topic", "remove_topic", "scope", "roundup"):
+    for keyword in ("add_topic", "list_scopes", "list_topics", "update_topic", "remove_topic",
+                    "scope", "roundup"):
         assert keyword in text, f"instructions missing expected keyword: {keyword!r}"
 
 
