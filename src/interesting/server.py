@@ -3,8 +3,9 @@ import json
 import logging
 import os
 import pathlib
+import sqlite3
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -18,6 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = "data"
+_Transport = Literal["stdio", "streamable-http"]
 
 
 def _resolve_db_path(name: str) -> str:
@@ -31,14 +33,27 @@ def _resolve_db_path(name: str) -> str:
     return str(pathlib.Path(_DATA_DIR) / normalized)
 
 
-# Set before mcp.run(); overridden in __main__ when --db or INTERESTING_DB_PATH is provided.
-_db_path: str = _resolve_db_path(os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
+# Overridden by __main__ before mcp.run(); resolved from env/default in _lifespan if still None.
+_db_path: str | None = None
+_conn: sqlite3.Connection | None = None
+
+
+def _get_conn() -> sqlite3.Connection:
+    if _conn is None:
+        raise RuntimeError("Database not initialized; server lifespan has not started")
+    return _conn
 
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
-    storage.init_db(_db_path)
-    yield
+    global _conn
+    path = _db_path or _resolve_db_path(os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
+    _conn = storage.init_db(path)
+    try:
+        yield
+    finally:
+        _conn.close()
+        _conn = None
 
 
 mcp = FastMCP(
@@ -110,10 +125,8 @@ def add_topic(title: str, scope: str = "") -> str:
     _validate_title(title)
     resolved_scope = scope if scope else storage.DEFAULT_SCOPE
     _validate_scope(resolved_scope)
-    topic = storage.add_topic(title, resolved_scope)
-    return json.dumps(
-        {"id": topic.id, "title": topic.title, "scope": topic.scope, "added_at": topic.added_at}
-    )
+    topic = storage.add_topic(_get_conn(), title, resolved_scope)
+    return json.dumps(topic.to_dict())
 
 
 @mcp.tool(
@@ -133,19 +146,8 @@ def list_topics(scope: str = "", roundup: bool = False) -> str:
     if scope:
         _validate_scope(scope)
     resolved = scope if scope else None
-    topics = storage.list_topics(scope=resolved, roundup=roundup)
-    return json.dumps(
-        [
-            {
-                "id": t.id,
-                "title": t.title,
-                "scope": t.scope,
-                "added_at": t.added_at,
-                "last_checked_at": t.last_checked_at,
-            }
-            for t in topics
-        ]
-    )
+    topics = storage.list_topics(_get_conn(), scope=resolved, roundup=roundup)
+    return json.dumps([t.to_dict() for t in topics])
 
 
 @mcp.tool(description="Removes a topic by ID.")
@@ -153,7 +155,7 @@ def remove_topic(id: str) -> str:
     logger.info("remove_topic called id=%r", id)
     if not id:
         raise ValueError("id must not be empty")
-    found = storage.remove_topic(id)
+    found = storage.remove_topic(_get_conn(), id)
     if not found:
         raise ValueError(f"topic not found: {id}")
     return "OK"
@@ -181,18 +183,10 @@ def update_topic(id: str, title: str = "", scope: str = "") -> str:
     if scope:
         _validate_scope(scope)
         new_scope = scope
-    topic = storage.update_topic(id, new_title, new_scope)
+    topic = storage.update_topic(_get_conn(), id, new_title, new_scope)
     if topic is None:
         raise ValueError(f"topic not found: {id}")
-    return json.dumps(
-        {
-            "id": topic.id,
-            "title": topic.title,
-            "scope": topic.scope,
-            "added_at": topic.added_at,
-            "last_checked_at": topic.last_checked_at,
-        }
-    )
+    return json.dumps(topic.to_dict())
 
 
 if __name__ == "__main__":
@@ -210,8 +204,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    transport: str = args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
+    transport = cast(
+        _Transport, args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
+    )
     _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
 
     logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
-    mcp.run(transport=transport)  # type: ignore[arg-type]
+    mcp.run(transport=transport)

@@ -13,10 +13,7 @@ from interesting.server import mcp
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_file = str(tmp_path / "test.db")
-    # Set _db_path so the lifespan uses the test DB if it runs during the session.
     monkeypatch.setattr(server_module, "_db_path", db_file)
-    # Also initialize directly in case the test harness skips the lifespan.
-    storage.init_db(db_file)
 
 
 async def test_add_topic_default_scope() -> None:
@@ -157,7 +154,8 @@ async def test_remove_topic_id_is_case_sensitive() -> None:
 
 def test_storage_init_creates_db(tmp_path: pathlib.Path) -> None:
     db_file = tmp_path / "explicit.db"
-    storage.init_db(str(db_file))
+    conn = storage.init_db(str(db_file))
+    conn.close()
     assert db_file.exists()
 
 
