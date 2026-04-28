@@ -2,9 +2,15 @@
 
 MCP server for deterministically tracking news stories of interest.
 
-## Prime Directive
+## Resources
 
-Always read `OVERVIEW.md` before beginning work.
+**CRITICAL**: Always read `OVERVIEW.md` before beginning work.
+
+- Technical documentation of this project: `OVERVIEW.md`
+- MCP guidance from Anthropic, my primary AI:
+  - https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
+  - https://claude.com/docs/connectors/building
+- Formal MCP protocol documentation: https://modelcontextprotocol.io/docs/getting-started/intro
 
 ## Commands
 

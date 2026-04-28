@@ -8,7 +8,8 @@
       "Bash(.venv/Scripts/pytest -v)",
       "Bash(.venv/Scripts/python -m ruff check src tests)",
       "Bash(.venv/Scripts/python -m pytest -v)",
-      "Bash(ruff check *)"
+      "Bash(ruff check *)",
+      "Bash(.venv/Scripts/ruff.exe check *)"
     ]
   }
 }

@@ -3,10 +3,22 @@ import json
 import logging
 import os
 import pathlib
+import secrets
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal, cast
 
+from mcp.server.auth.handlers.authorize import construct_redirect_uri
+from mcp.server.auth.provider import (
+    AccessToken,
+    AuthorizationCode,
+    AuthorizationParams,
+    OAuthClientInformationFull,
+    OAuthToken,
+    RefreshToken,
+)
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -21,6 +33,93 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = "data"
 _Transport = Literal["stdio", "streamable-http"]
 
+# --- Auth config (read once at import; no filesystem I/O) ---
+_client_id: str = os.environ.get("INTERESTING_CLIENT_ID", "")
+_client_secret: str = os.environ.get("INTERESTING_CLIENT_SECRET", "")
+_access_token_value: str = os.environ.get("INTERESTING_ACCESS_TOKEN", "")
+_auth_enabled: bool = bool(_client_id and _client_secret and _access_token_value)
+
+_CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
+_AUTH_CODE_TTL = 300  # seconds
+
+
+class _SingleUserOAuthProvider:
+    """OAuth 2.0 Authorization Code + PKCE server for a single pre-registered client.
+
+    Auto-approves every authorization request — security relies on network-level access
+    control (e.g. Tailscale). In-memory code store is intentionally ephemeral.
+    """
+
+    def __init__(self) -> None:
+        self._pending_codes: dict[str, AuthorizationCode] = {}
+
+    def _registered_client(self) -> OAuthClientInformationFull:
+        return OAuthClientInformationFull(
+            client_id=_client_id,
+            client_secret=_client_secret,
+            redirect_uris=[_CLAUDE_REDIRECT_URI],  # type: ignore[arg-type]
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code"],
+            response_types=["code"],
+        )
+
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        return self._registered_client() if client_id == _client_id else None
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        raise NotImplementedError("dynamic client registration is disabled")
+
+    async def authorize(
+        self, client: OAuthClientInformationFull, params: AuthorizationParams
+    ) -> str:
+        code = secrets.token_urlsafe(32)
+        self._pending_codes[code] = AuthorizationCode(
+            code=code,
+            scopes=params.scopes or [],
+            expires_at=time.time() + _AUTH_CODE_TTL,
+            client_id=client.client_id or "",
+            code_challenge=params.code_challenge,
+            redirect_uri=params.redirect_uri,
+            redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
+        )
+        logger.info("authorize: issued code for client_id=%r", client.client_id)
+        return construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state)
+
+    async def load_authorization_code(
+        self, client: OAuthClientInformationFull, authorization_code: str
+    ) -> AuthorizationCode | None:
+        return self._pending_codes.get(authorization_code)
+
+    async def exchange_authorization_code(
+        self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
+    ) -> OAuthToken:
+        self._pending_codes.pop(authorization_code.code, None)
+        logger.info(
+            "exchange_authorization_code: issued access token for client_id=%r", client.client_id
+        )
+        return OAuthToken(access_token=_access_token_value, token_type="Bearer", expires_in=86400)
+
+    async def load_refresh_token(
+        self, client: OAuthClientInformationFull, refresh_token: str
+    ) -> RefreshToken | None:
+        return None
+
+    async def exchange_refresh_token(
+        self,
+        client: OAuthClientInformationFull,
+        refresh_token: RefreshToken,
+        scopes: list[str],
+    ) -> OAuthToken:
+        raise NotImplementedError("refresh tokens are not supported")
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        if secrets.compare_digest(token, _access_token_value):
+            return AccessToken(token=token, client_id=_client_id, scopes=[])
+        return None
+
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        pass
+
 
 def _resolve_db_path(name: str) -> str:
     """Resolve a DB name/path to a path under the data/ directory.
@@ -30,8 +129,12 @@ def _resolve_db_path(name: str) -> str:
     JSON configs where backslash escaping may vary. Absolute paths are rejected.
     """
     normalized = name.replace("\\", "/")
-    if pathlib.PurePosixPath(normalized).is_absolute() or pathlib.PureWindowsPath(normalized).is_absolute():
-        raise ValueError(f"absolute paths are not supported; pass a filename or relative path (got {name!r})")
+    posix_abs = pathlib.PurePosixPath(normalized).is_absolute()
+    win_abs = pathlib.PureWindowsPath(normalized).is_absolute()
+    if posix_abs or win_abs:
+        raise ValueError(
+            f"absolute paths are not supported; pass a filename or relative path (got {name!r})"
+        )
     return str(pathlib.Path(_DATA_DIR) / normalized)
 
 
@@ -58,6 +161,14 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
         _conn = None
 
 
+_auth_kwargs: dict = {}
+if _auth_enabled:
+    _base_url = os.environ.get("INTERESTING_BASE_URL", "http://localhost:8000")
+    _auth_kwargs = {
+        "auth_server_provider": _SingleUserOAuthProvider(),
+        "auth": AuthSettings(issuer_url=_base_url, resource_server_url=_base_url),
+    }
+
 mcp = FastMCP(
     "interesting",
     lifespan=_lifespan,
@@ -65,6 +176,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         allowed_hosts=["soliboy.tail52f9f8.ts.net", "localhost", "127.0.0.1"]
     ),
+    **_auth_kwargs,
 )
 
 
@@ -211,5 +323,15 @@ if __name__ == "__main__":
     )
     _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
 
-    logger.info("Starting interesting MCP server with transport=%s db=%s", transport, _db_path)
+    logger.info(
+        "Starting interesting MCP server with transport=%s db=%s auth=%s",
+        transport,
+        _db_path,
+        "enabled" if _auth_enabled else "disabled",
+    )
+    if transport == "streamable-http" and not _auth_enabled:
+        logger.warning(
+            "Running in HTTP mode without auth; set INTERESTING_CLIENT_ID, "
+            "INTERESTING_CLIENT_SECRET, and INTERESTING_ACCESS_TOKEN to enable auth"
+        )
     mcp.run(transport=transport)

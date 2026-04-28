@@ -88,3 +88,30 @@ CLI arguments take precedence over environment variables.
 |---|---|---|
 | `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `streamable-http` |
 | `INTERESTING_DB_PATH` | `data/interesting.db` | Path to the SQLite database file |
+
+### Authentication (HTTP mode only)
+
+When running in `streamable-http` mode, set all three credential variables to enable OAuth 2.0
+Client Credentials authentication. If any are absent the server starts without auth (appropriate
+for stdio / local dev).
+
+| Variable | Description |
+|---|---|
+| `INTERESTING_CLIENT_ID` | OAuth client ID presented by the MCP client at token fetch time |
+| `INTERESTING_CLIENT_SECRET` | OAuth client secret presented by the MCP client at token fetch time |
+| `INTERESTING_ACCESS_TOKEN` | Static bearer token issued by `/token` and validated on every MCP request |
+| `INTERESTING_BASE_URL` | Server base URL used as OAuth issuer URL (default: `http://localhost:8000`) |
+
+Generate strong random values for the secret and token, e.g.:
+
+```
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+#### Connecting Claude to an authenticated server
+
+In the Claude custom connector settings, enter your server URL and set:
+- **OAuth Client ID**: value of `INTERESTING_CLIENT_ID`
+- **OAuth Client Secret**: value of `INTERESTING_CLIENT_SECRET`
+
+Claude will POST to `<server-url>/token` to fetch a bearer token before connecting.

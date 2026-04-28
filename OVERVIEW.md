@@ -124,13 +124,28 @@ In tests, `monkeypatch.setattr(server_module, "_db_path", db_file)` points the l
 
 Transport is selected via the `--transport` CLI argument or `MCP_TRANSPORT` environment variable, with CLI taking precedence. In HTTP mode the server binds to `0.0.0.0:8000`.
 
+## Authentication
+
+HTTP mode supports OAuth 2.0 Client Credentials authentication, opt-in via three environment variables. Auth is disabled when any of the three are absent, which is the correct default for stdio mode and local dev.
+
+### Token flow
+
+1. Claude POSTs `grant_type=client_credentials` + `client_id` + `client_secret` to `/token`.
+2. The server validates the credentials and returns a static bearer token.
+3. Claude sends `Authorization: Bearer <token>` with every subsequent MCP request.
+4. `_StaticTokenVerifier.verify_token()` validates the token; the SDK's `BearerAuthBackend` + `RequireAuthMiddleware` enforce it on the MCP endpoint.
+
+The `/token` route is registered via `@mcp.custom_route` (always public, as required by the OAuth flow). The MCP route at `"/"` is wrapped by `RequireAuthMiddleware` when a `token_verifier` is configured.
+
+Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
+
 ## Configuration
 
 | Source | Precedence | Variables / flags |
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
-| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH` |
-| Defaults | Lowest | `stdio`, `data/interesting.db` |
+| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_CLIENT_ID`, `INTERESTING_CLIENT_SECRET`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
+| Defaults | Lowest | `stdio`, `data/interesting.db`, auth disabled |
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.
 
