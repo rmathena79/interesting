@@ -181,6 +181,19 @@ mcp = FastMCP(
 
 _TITLE_MAX = 128
 _NOTES_MAX = 512
+_ID_MAX = 64
+
+
+def _validate_id(id_value: str) -> None:
+    """Validate a topic ID. Server-generated IDs are UUIDs, but the check is permissive
+    enough that any reasonable opaque string passes — only obviously malformed input is
+    rejected before reaching the DB."""
+    if not id_value or not id_value.strip():
+        raise ValueError("id must not be empty")
+    if len(id_value) > _ID_MAX:
+        raise ValueError(f"id must be {_ID_MAX} characters or fewer")
+    if not all(0x20 <= ord(c) <= 0x7E for c in id_value):
+        raise ValueError("id must contain only printable ASCII characters (no control characters)")
 
 
 def _validate_title(title: str) -> None:
@@ -293,8 +306,7 @@ def list_topics(scope: str = "", roundup: bool = False, include_archived: bool =
 @mcp.tool(description="Removes a topic by ID.")
 def remove_topic(id: str) -> str:
     logger.info("remove_topic called id=%r", id)
-    if not id:
-        raise ValueError("id must not be empty")
+    _validate_id(id)
     found = storage.remove_topic(_get_conn(), id)
     if not found:
         raise ValueError(f"topic not found: {id}")
@@ -311,8 +323,7 @@ def remove_topic(id: str) -> str:
 )
 def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> str:
     logger.info("update_topic called id=%r title=%r scope=%r", id, title, scope)
-    if not id:
-        raise ValueError("id must not be empty")
+    _validate_id(id)
     if not title and not scope and not notes:
         raise ValueError("at least one of title, scope, or notes must be provided")
     new_title: str | None = None
@@ -348,8 +359,7 @@ def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> 
 )
 def archive_topic(id: str, archived: bool = True) -> str:
     logger.info("archive_topic called id=%r archived=%r", id, archived)
-    if not id:
-        raise ValueError("id must not be empty")
+    _validate_id(id)
     topic = storage.archive_topic(_get_conn(), id, archived)
     if topic is None:
         raise ValueError(f"topic not found: {id}")

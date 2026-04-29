@@ -176,6 +176,87 @@ async def test_remove_topic_id_is_case_sensitive() -> None:
     assert result.isError
 
 
+# --- ID sanitization tests (apply to remove_topic, update_topic, archive_topic) ---
+
+
+async def test_remove_topic_whitespace_only_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": "   "})
+    assert result.isError
+
+
+async def test_remove_topic_control_char_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": "abc\nxyz"})
+    assert result.isError
+
+
+async def test_remove_topic_null_byte_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": "abc\x00xyz"})
+    assert result.isError
+
+
+async def test_remove_topic_non_ascii_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": "café-id"})
+    assert result.isError
+
+
+async def test_remove_topic_too_long_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("remove_topic", {"id": "a" * 65})
+    assert result.isError
+
+
+async def test_update_topic_whitespace_only_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "   ", "title": "X"})
+    assert result.isError
+
+
+async def test_update_topic_control_char_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "abc\tdef", "title": "X"})
+    assert result.isError
+
+
+async def test_update_topic_non_ascii_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "café-id", "title": "X"})
+    assert result.isError
+
+
+async def test_update_topic_too_long_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("update_topic", {"id": "a" * 65, "title": "X"})
+    assert result.isError
+
+
+async def test_archive_topic_whitespace_only_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": "   "})
+    assert result.isError
+
+
+async def test_archive_topic_control_char_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": "abc\rdef"})
+    assert result.isError
+
+
+async def test_archive_topic_non_ascii_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": "café-id"})
+    assert result.isError
+
+
+async def test_archive_topic_too_long_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": "a" * 65})
+    assert result.isError
+
+
 def test_storage_init_creates_db(tmp_path: pathlib.Path) -> None:
     db_file = tmp_path / "explicit.db"
     conn = storage.init_db(str(db_file))
