@@ -179,19 +179,34 @@ mcp = FastMCP(
     **_auth_kwargs,
 )
 
+_TITLE_MAX = 128
+_NOTES_MAX = 512
+
 
 def _validate_title(title: str) -> None:
-    if not title:
+    if not title or not title.strip():
         raise ValueError("title must not be empty")
-    if len(title) > 128:
-        raise ValueError("title must be 128 characters or fewer")
-    if not title.isascii():
-        raise ValueError("title must be ASCII only")
+    if len(title) > _TITLE_MAX:
+        raise ValueError(f"title must be {_TITLE_MAX} characters or fewer")
+    if not all(0x20 <= ord(c) <= 0x7E for c in title):
+        raise ValueError(
+            "title must contain only printable ASCII characters (no control characters)"
+        )
 
 
 def _validate_scope(scope: str) -> None:
     if scope not in storage.KNOWN_SCOPES:
         raise ValueError(f"unknown scope {scope!r}; call list_scopes for valid options")
+
+
+def _validate_notes(notes: str) -> None:
+    """Validate notes when non-empty. Empty string means 'no notes provided'."""
+    if len(notes) > _NOTES_MAX:
+        raise ValueError(f"notes must be {_NOTES_MAX} characters or fewer")
+    if not all(0x20 <= ord(c) <= 0x7E for c in notes):
+        raise ValueError(
+            "notes must contain only printable ASCII characters (no control characters)"
+        )
 
 
 @mcp.tool(
@@ -234,12 +249,14 @@ def get_instructions_tool() -> str:
 
 
 @mcp.tool(description="Adds a topic of interest and returns the created entry.")
-def add_topic(title: str, scope: str = "") -> str:
+def add_topic(title: str, scope: str = "", notes: str = "") -> str:
     logger.info("add_topic called title=%r scope=%r", title, scope)
     _validate_title(title)
     resolved_scope = scope if scope else storage.DEFAULT_SCOPE
     _validate_scope(resolved_scope)
-    topic = storage.add_topic(_get_conn(), title, resolved_scope)
+    if notes:
+        _validate_notes(notes)
+    topic = storage.add_topic(_get_conn(), title, resolved_scope, notes if notes else None)
     return json.dumps(topic.to_dict())
 
 
@@ -252,15 +269,24 @@ def add_topic(title: str, scope: str = "") -> str:
         "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
         "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
         "Without roundup=true, all matching topics are returned sorted by title. "
+        "By default only active (non-archived) topics are returned; pass include_archived=true "
+        "to include archived topics as well. "
         "Use list_scopes to see valid scope values."
     )
 )
-def list_topics(scope: str = "", roundup: bool = False) -> str:
-    logger.info("list_topics called scope=%r roundup=%r", scope, roundup)
+def list_topics(scope: str = "", roundup: bool = False, include_archived: bool = False) -> str:
+    logger.info(
+        "list_topics called scope=%r roundup=%r include_archived=%r",
+        scope,
+        roundup,
+        include_archived,
+    )
     if scope:
         _validate_scope(scope)
     resolved = scope if scope else None
-    topics = storage.list_topics(_get_conn(), scope=resolved, roundup=roundup)
+    topics = storage.list_topics(
+        _get_conn(), scope=resolved, roundup=roundup, include_archived=include_archived
+    )
     return json.dumps([t.to_dict() for t in topics])
 
 
@@ -277,18 +303,18 @@ def remove_topic(id: str) -> str:
 
 @mcp.tool(
     description=(
-        "Updates the title and/or scope of an existing topic. "
+        "Updates the title, scope, and/or notes of an existing topic. "
         "Pass only the fields you want to change; omit or pass empty string to leave unchanged. "
-        "At least one of title or scope must be provided. "
-        "The topic ID, added_at, and last_checked_at are never changed by this call."
+        "At least one of title, scope, or notes must be provided. "
+        "The topic ID, added_at, last_checked_at, and status are never changed by this call."
     )
 )
-def update_topic(id: str, title: str = "", scope: str = "") -> str:
+def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> str:
     logger.info("update_topic called id=%r title=%r scope=%r", id, title, scope)
     if not id:
         raise ValueError("id must not be empty")
-    if not title and not scope:
-        raise ValueError("at least one of title or scope must be provided")
+    if not title and not scope and not notes:
+        raise ValueError("at least one of title, scope, or notes must be provided")
     new_title: str | None = None
     new_scope: str | None = None
     if title:
@@ -297,7 +323,34 @@ def update_topic(id: str, title: str = "", scope: str = "") -> str:
     if scope:
         _validate_scope(scope)
         new_scope = scope
-    topic = storage.update_topic(_get_conn(), id, new_title, new_scope)
+    if notes:
+        _validate_notes(notes)
+    topic = storage.update_topic(
+        _get_conn(),
+        id,
+        new_title,
+        new_scope,
+        notes=notes if notes else None,
+        update_notes=bool(notes),
+    )
+    if topic is None:
+        raise ValueError(f"topic not found: {id}")
+    return json.dumps(topic.to_dict())
+
+
+@mcp.tool(
+    description=(
+        "Archives a topic to remove it from normal rotation without deleting it. "
+        "Use when a story has concluded or is no longer relevant. "
+        "Pass archived=false to reactivate an archived topic if a story resurfaces. "
+        "Archived topics do not appear in list_topics or roundups by default."
+    )
+)
+def archive_topic(id: str, archived: bool = True) -> str:
+    logger.info("archive_topic called id=%r archived=%r", id, archived)
+    if not id:
+        raise ValueError("id must not be empty")
+    topic = storage.archive_topic(_get_conn(), id, archived)
     if topic is None:
         raise ValueError(f"topic not found: {id}")
     return json.dumps(topic.to_dict())
@@ -318,9 +371,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    transport = cast(
-        _Transport, args.transport or os.environ.get("MCP_TRANSPORT", "stdio")
-    )
+    transport = cast(_Transport, args.transport or os.environ.get("MCP_TRANSPORT", "stdio"))
     _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
 
     logger.info(

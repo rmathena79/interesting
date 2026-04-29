@@ -54,6 +54,12 @@ async def test_add_topic_title_too_long_fails() -> None:
     assert result.isError
 
 
+async def test_add_topic_title_max_length_succeeds() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "x" * 128})
+    assert not result.isError
+
+
 async def test_add_topic_non_ascii_title_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.call_tool("add_topic", {"title": "Café News"})
@@ -65,6 +71,29 @@ async def test_add_topic_non_ascii_scope_fails() -> None:
         result = await client.call_tool("add_topic", {"title": "News", "scope": "éu"})
     assert result.isError
 
+
+async def test_add_topic_whitespace_only_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "   "})
+    assert result.isError
+
+
+async def test_add_topic_control_char_in_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "AI\nNews"})
+    assert result.isError
+
+
+async def test_add_topic_tab_in_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "AI\tNews"})
+    assert result.isError
+
+
+async def test_add_topic_null_byte_in_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "AI\x00News"})
+    assert result.isError
 
 
 async def test_add_topic_returns_unique_ids() -> None:
@@ -391,6 +420,16 @@ async def test_update_topic_invalid_title_fails() -> None:
     assert result.isError
 
 
+async def test_update_topic_control_char_title_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "title": "Title\nWith\nNewlines"}
+        )
+    assert result.isError
+
+
 async def test_update_topic_invalid_scope_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         add_result = await client.call_tool("add_topic", {"title": "My Topic"})
@@ -444,6 +483,230 @@ async def test_list_topics_unknown_scope_fails() -> None:
     assert result.isError
 
 
+# --- notes field tests ---
+
+
+async def test_add_topic_with_notes() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool(
+            "add_topic",
+            {"title": "AI Antitrust Case", "notes": "Focus on DOJ angle, not stock price"},
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["notes"] == "Focus on DOJ angle, not stock price"
+
+
+async def test_add_topic_without_notes_has_null() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Some Story"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["notes"] is None
+
+
+async def test_add_topic_notes_too_long_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "x" * 513})
+    assert result.isError
+
+
+async def test_add_topic_notes_max_length_succeeds() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "x" * 512})
+    assert not result.isError
+
+
+async def test_add_topic_notes_non_ascii_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "focus on — dash"})
+    assert result.isError
+
+
+async def test_add_topic_notes_control_char_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "line1\nline2"})
+    assert result.isError
+
+
+async def test_update_topic_notes() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "notes": "New search guidance"}
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["notes"] == "New search guidance"
+
+
+async def test_update_topic_notes_reflected_in_list() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "notes": "Track regulatory angle"})
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["notes"] == "Track regulatory angle"
+
+
+async def test_update_topic_notes_too_long_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "notes": "x" * 513})
+    assert result.isError
+
+
+async def test_update_topic_notes_non_ascii_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "notes": "café"})
+    assert result.isError
+
+
+async def test_update_topic_omitting_notes_leaves_unchanged() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "My Topic", "notes": "Original notes"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "title": "Updated Title"})
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["notes"] == "Original notes"
+
+
+# --- archive_topic tests ---
+
+
+async def test_add_topic_returns_active_status() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "My Topic"})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["status"] == "active"
+
+
+async def test_archive_topic_success() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Concluded Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("archive_topic", {"id": topic_id})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["status"] == "archived"
+    assert data["id"] == topic_id
+
+
+async def test_archive_topic_excluded_from_default_list() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Concluded Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data == []
+
+
+async def test_archive_topic_visible_with_include_archived() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Concluded Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        result = await client.call_tool("list_topics", {"include_archived": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["status"] == "archived"
+
+
+async def test_archived_topic_excluded_from_roundup() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Active Story"})
+        add_result = await client.call_tool("add_topic", {"title": "Archived Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    titles = {t["title"] for t in data}
+    assert "Active Story" in titles
+    assert "Archived Story" not in titles
+
+
+async def test_unarchive_topic_returns_to_list() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Resurfaced Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        await client.call_tool("archive_topic", {"id": topic_id, "archived": False})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["status"] == "active"
+
+
+async def test_unarchive_topic_appears_in_roundup() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Resurfaced Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        await client.call_tool("archive_topic", {"id": topic_id, "archived": False})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+
+
+async def test_archive_topic_not_found_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": "no-such-id"})
+    assert result.isError
+
+
+async def test_archive_topic_empty_id_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("archive_topic", {"id": ""})
+    assert result.isError
+
+
+async def test_archive_topic_preserves_notes_and_timestamps() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic",
+            {"title": "Story With Notes", "notes": "some guidance"},
+        )
+        topic_data = json.loads(add_result.content[0].text)  # type: ignore[union-attr]
+        topic_id = topic_data["id"]
+        added_at = topic_data["added_at"]
+        result = await client.call_tool("archive_topic", {"id": topic_id})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["notes"] == "some guidance"
+    assert data["added_at"] == added_at
+
+
+async def test_include_archived_false_hides_archived() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Active Story"})
+        add_result = await client.call_tool("add_topic", {"title": "Archived Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        result = await client.call_tool("list_topics", {"include_archived": False})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["title"] == "Active Story"
+
+
+async def test_include_archived_true_shows_both() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Active Story"})
+        add_result = await client.call_tool("add_topic", {"title": "Archived Story"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("archive_topic", {"id": topic_id})
+        result = await client.call_tool("list_topics", {"include_archived": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 2
+
+
 # --- Resource tests ---
 
 
@@ -454,8 +717,18 @@ async def test_instructions_resource_returns_text() -> None:
     text = result.contents[0].text  # type: ignore[union-attr]
     assert isinstance(text, str)
     assert len(text) > 100
-    for keyword in ("add_topic", "list_scopes", "list_topics", "update_topic", "remove_topic",
-                    "scope", "roundup"):
+    for keyword in (
+        "add_topic",
+        "list_scopes",
+        "list_topics",
+        "update_topic",
+        "remove_topic",
+        "archive_topic",
+        "scope",
+        "roundup",
+        "notes",
+        "status",
+    ):
         assert keyword in text, f"instructions missing expected keyword: {keyword!r}"
 
 
@@ -463,11 +736,11 @@ async def test_instructions_resource_covers_roundup_workflow() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.read_resource(AnyUrl("interesting://instructions"))
     text = result.contents[0].text  # type: ignore[union-attr]
-    assert "pdx" in text                               # scope hierarchy
-    assert "128" in text                               # title max-length rule
-    assert "last_checked_at" in text                   # roundup semantics
-    assert "news" in text                              # roundup trigger
-    assert "OpenAI" in text or "Bondi" in text         # concrete title example
+    assert "pdx" in text  # scope hierarchy
+    assert "128" in text  # title max-length rule
+    assert "last_checked_at" in text  # roundup semantics
+    assert "news" in text  # roundup trigger
+    assert "OpenAI" in text or "Bondi" in text  # concrete title example
 
 
 async def test_get_instructions_tool_returns_same_content() -> None:
