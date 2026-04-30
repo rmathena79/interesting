@@ -31,6 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = "data"
+_DEFAULT_DB_NAME = "interesting.db"
 _Transport = Literal["stdio", "streamable-http"]
 
 # --- Auth config (read once at import; no filesystem I/O) ---
@@ -41,6 +42,8 @@ _auth_enabled: bool = bool(_client_id and _client_secret and _access_token_value
 
 _CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 _AUTH_CODE_TTL = 300  # seconds
+_AUTH_CODE_BYTES = 32
+_TOKEN_TTL = 24 * 60 * 60  # seconds
 
 
 class _SingleUserOAuthProvider:
@@ -72,7 +75,7 @@ class _SingleUserOAuthProvider:
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
-        code = secrets.token_urlsafe(32)
+        code = secrets.token_urlsafe(_AUTH_CODE_BYTES)
         self._pending_codes[code] = AuthorizationCode(
             code=code,
             scopes=params.scopes or [],
@@ -97,7 +100,9 @@ class _SingleUserOAuthProvider:
         logger.info(
             "exchange_authorization_code: issued access token for client_id=%r", client.client_id
         )
-        return OAuthToken(access_token=_access_token_value, token_type="Bearer", expires_in=86400)
+        return OAuthToken(
+            access_token=_access_token_value, token_type="Bearer", expires_in=_TOKEN_TTL
+        )
 
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
@@ -152,7 +157,7 @@ def _get_conn() -> sqlite3.Connection:
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
     global _conn
-    path = _db_path or _resolve_db_path(os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
+    path = _db_path or _resolve_db_path(os.environ.get("INTERESTING_DB_PATH", _DEFAULT_DB_NAME))
     _conn = storage.init_db(path)
     try:
         yield
@@ -161,9 +166,16 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
         _conn = None
 
 
+_DEFAULT_BASE_URL = "http://localhost:8000"
+_allowed_hosts: list[str] = [
+    h.strip()
+    for h in os.environ.get("INTERESTING_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
 _auth_kwargs: dict = {}
 if _auth_enabled:
-    _base_url = os.environ.get("INTERESTING_BASE_URL", "http://localhost:8000")
+    _base_url = os.environ.get("INTERESTING_BASE_URL", _DEFAULT_BASE_URL)
     _auth_kwargs = {
         "auth_server_provider": _SingleUserOAuthProvider(),
         "auth": AuthSettings(issuer_url=_base_url, resource_server_url=_base_url),
@@ -173,9 +185,7 @@ mcp = FastMCP(
     "interesting",
     lifespan=_lifespan,
     streamable_http_path="/",
-    transport_security=TransportSecuritySettings(
-        allowed_hosts=["soliboy.tail52f9f8.ts.net", "localhost", "127.0.0.1"]
-    ),
+    transport_security=TransportSecuritySettings(allowed_hosts=_allowed_hosts),
     **_auth_kwargs,
 )
 
@@ -379,7 +389,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport = cast(_Transport, args.transport or os.environ.get("MCP_TRANSPORT", "stdio"))
-    _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", "interesting.db"))
+    _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", _DEFAULT_DB_NAME))
 
     logger.info(
         "Starting interesting MCP server with transport=%s db=%s auth=%s",

@@ -149,7 +149,7 @@ Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are rea
 | Source | Precedence | Variables / flags |
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
-| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_CLIENT_ID`, `INTERESTING_CLIENT_SECRET`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
+| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_CLIENT_SECRET`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
 | Defaults | Lowest | `stdio`, `data/interesting.db`, auth disabled |
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.

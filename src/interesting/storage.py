@@ -19,7 +19,9 @@ _CONTAINED_SCOPES: dict[str, set[str]] = {
 }
 
 KNOWN_SCOPES: frozenset[str] = frozenset({DEFAULT_SCOPE} | set(_CONTAINED_SCOPES.keys()))
-KNOWN_STATUSES: frozenset[str] = frozenset({"active", "archived"})
+_STATUS_ACTIVE = "active"
+_STATUS_ARCHIVED = "archived"
+KNOWN_STATUSES: frozenset[str] = frozenset({_STATUS_ACTIVE, _STATUS_ARCHIVED})
 
 
 def get_scope_hierarchy() -> dict[str, list[str]]:
@@ -132,8 +134,8 @@ def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | Non
     stored_notes = notes if notes else None
     conn.execute(
         "INSERT INTO topics (id, title, scope, added_at, notes, status)"
-        " VALUES (?, ?, ?, ?, ?, 'active')",
-        (topic_id, title, scope, added_at, stored_notes),
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (topic_id, title, scope, added_at, stored_notes, _STATUS_ACTIVE),
     )
     conn.commit()
     logger.info("Added topic id=%s title=%r scope=%r", topic_id, title, scope)
@@ -144,7 +146,7 @@ def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | Non
         added_at=added_at,
         last_checked_at=None,
         notes=stored_notes,
-        status="active",
+        status=_STATUS_ACTIVE,
     )
 
 
@@ -164,7 +166,8 @@ def list_topics(
         params.extend(sorted(included))
 
     if not include_archived:
-        conditions.append("status = 'active'")
+        conditions.append("status = ?")
+        params.append(_STATUS_ACTIVE)
 
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -241,7 +244,7 @@ def update_topic(
 
 
 def archive_topic(conn: sqlite3.Connection, topic_id: str, archived: bool) -> Topic | None:
-    status = "archived" if archived else "active"
+    status = _STATUS_ARCHIVED if archived else _STATUS_ACTIVE
     cursor = conn.execute("UPDATE topics SET status = ? WHERE id = ?", (status, topic_id))
     conn.commit()
     if cursor.rowcount == 0:
