@@ -21,7 +21,6 @@ _CONTAINED_SCOPES: dict[str, set[str]] = {
 KNOWN_SCOPES: frozenset[str] = frozenset({DEFAULT_SCOPE} | set(_CONTAINED_SCOPES.keys()))
 _STATUS_ACTIVE = "active"
 _STATUS_ARCHIVED = "archived"
-KNOWN_STATUSES: frozenset[str] = frozenset({_STATUS_ACTIVE, _STATUS_ARCHIVED})
 
 
 def get_scope_hierarchy() -> dict[str, list[str]]:
@@ -92,7 +91,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
 
     row = conn.execute("SELECT version FROM schema_version").fetchone()
     version = row[0] if row else 0
-    needs_version_update = row is None
+    needs_version_update = row is None  # legacy detection may skip all migration blocks
 
     if version == 0:
         # Detect databases migrated before version tracking was introduced.
@@ -131,11 +130,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
 def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | None = None) -> Topic:
     topic_id = str(uuid.uuid4())
     added_at = datetime.now(timezone.utc).isoformat()
-    stored_notes = notes if notes else None
     conn.execute(
         "INSERT INTO topics (id, title, scope, added_at, notes, status)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (topic_id, title, scope, added_at, stored_notes, _STATUS_ACTIVE),
+        (topic_id, title, scope, added_at, notes, _STATUS_ACTIVE),
     )
     conn.commit()
     logger.info("Added topic id=%s title=%r scope=%r", topic_id, title, scope)
@@ -145,7 +143,7 @@ def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | Non
         scope=scope,
         added_at=added_at,
         last_checked_at=None,
-        notes=stored_notes,
+        notes=notes,
         status=_STATUS_ACTIVE,
     )
 

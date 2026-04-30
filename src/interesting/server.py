@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Literal, cast
+from typing import Any, AsyncIterator, Literal, cast
 
 from mcp.server.auth.handlers.authorize import construct_redirect_uri
 from mcp.server.auth.provider import (
@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 _DATA_DIR = "data"
 _DEFAULT_DB_NAME = "interesting.db"
+_TITLE_MAX = 128
+_NOTES_MAX = 512
+_ID_MAX = 64
 _Transport = Literal["stdio", "streamable-http"]
 
 # --- Auth config (read once at import; no filesystem I/O) ---
@@ -167,15 +170,15 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 
 _DEFAULT_BASE_URL = "http://localhost:8000"
+_base_url: str = os.environ.get("INTERESTING_BASE_URL", _DEFAULT_BASE_URL)
 _allowed_hosts: list[str] = [
     h.strip()
     for h in os.environ.get("INTERESTING_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if h.strip()
 ]
 
-_auth_kwargs: dict = {}
+_auth_kwargs: dict[str, Any] = {}
 if _auth_enabled:
-    _base_url = os.environ.get("INTERESTING_BASE_URL", _DEFAULT_BASE_URL)
     _auth_kwargs = {
         "auth_server_provider": _SingleUserOAuthProvider(),
         "auth": AuthSettings(issuer_url=_base_url, resource_server_url=_base_url),
@@ -189,10 +192,6 @@ mcp = FastMCP(
     **_auth_kwargs,
 )
 
-_TITLE_MAX = 128
-_NOTES_MAX = 512
-_ID_MAX = 64
-
 
 def _is_printable_ascii(s: str) -> bool:
     return all(0x20 <= ord(c) <= 0x7E for c in s)
@@ -201,6 +200,8 @@ def _is_printable_ascii(s: str) -> bool:
 def _validate_field(value: str, field_name: str, max_len: int, *, required: bool = True) -> None:
     if required and (not value or not value.strip()):
         raise ValueError(f"{field_name} must not be empty")
+    if not required and value and not value.strip():
+        raise ValueError(f"{field_name} must not be blank")
     if len(value) > max_len:
         raise ValueError(f"{field_name} must be {max_len} characters or fewer")
     if not _is_printable_ascii(value):
