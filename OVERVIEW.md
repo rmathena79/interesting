@@ -42,15 +42,16 @@ All database access is through plain functions that take a `sqlite3.Connection` 
 | Function | Purpose |
 |---|---|
 | `init_db(db_path)` | Opens/creates the database, runs schema migrations, returns the connection |
-| `add_topic(conn, title, scope)` | Inserts a new topic, returns a `Topic` |
-| `list_topics(conn, scope, roundup)` | Queries topics with optional scope filter and roundup logic |
-| `update_topic(conn, topic_id, title, scope)` | Updates fields, returns the updated `Topic` or `None` |
+| `add_topic(conn, title, scope, notes)` | Inserts a new topic, returns a `Topic` |
+| `list_topics(conn, scope, roundup, include_archived)` | Queries topics with optional scope filter, roundup logic, and archived filter |
+| `update_topic(conn, topic_id, title, scope, notes, update_notes)` | Updates fields, returns the updated `Topic` or `None` |
+| `archive_topic(conn, topic_id, archived)` | Sets status to `"archived"` or `"active"`, returns the updated `Topic` or `None` |
 | `remove_topic(conn, topic_id)` | Deletes by ID, returns success bool |
 | `get_scope_hierarchy()` | Returns the containment map; no database access |
 
 ### Server layer (`server.py`)
 
-Defines a `FastMCP` instance with six tools and one resource. It owns the `sqlite3.Connection` lifecycle:
+Defines a `FastMCP` instance with seven tools and one resource. It owns the `sqlite3.Connection` lifecycle:
 
 - `_conn: sqlite3.Connection | None` — module-level connection, `None` until the server starts.
 - `_lifespan` — async context manager registered with FastMCP. On startup it resolves the database path, calls `storage.init_db`, and stores the returned connection. On shutdown it closes the connection.
@@ -65,10 +66,12 @@ Tool functions are synchronous; FastMCP handles the async boundary. Each tool va
 ```python
 class Topic(NamedTuple):
     id: str               # UUID4, server-generated
-    title: str            # ASCII, 1–128 chars
+    title: str            # printable ASCII, 1–128 chars
     scope: str            # one of KNOWN_SCOPES
     added_at: str | None  # ISO 8601 UTC; null for pre-migration rows
     last_checked_at: str | None  # ISO 8601 UTC; null until first roundup inclusion
+    notes: str | None     # optional search guidance, printable ASCII ≤512 chars; null if unset
+    status: str           # "active" (default) or "archived"
 ```
 
 `Topic.to_dict()` produces the canonical JSON-serializable dict returned by all tools.
@@ -82,12 +85,14 @@ CREATE TABLE topics (
     id              TEXT PRIMARY KEY,
     title           TEXT NOT NULL,
     scope           TEXT NOT NULL,
-    added_at        TEXT,          -- added in migration 1
-    last_checked_at TEXT           -- added in migration 2
+    added_at        TEXT,                        -- added in migration 1
+    last_checked_at TEXT,                        -- added in migration 2
+    notes           TEXT,                        -- added in migration 3
+    status          TEXT NOT NULL DEFAULT 'active'  -- added in migration 3
 );
 ```
 
-`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 2` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the current version.
+`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 3` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the highest migration level whose columns are all present.
 
 SQLite is opened in WAL mode (`PRAGMA journal_mode=WAL`) to allow concurrent reads alongside writes.
 
@@ -107,7 +112,7 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 ## Roundup Rotation
 
-`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. The query orders by `last_checked_at ASC NULLS FIRST, RANDOM()` and applies a `LIMIT 6`. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
+`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode. The query orders by `last_checked_at ASC NULLS FIRST, RANDOM()` and applies a `LIMIT 6`. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
 
 ## Connection Lifecycle and Testing
 
