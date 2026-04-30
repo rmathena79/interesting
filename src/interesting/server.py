@@ -184,27 +184,30 @@ _NOTES_MAX = 512
 _ID_MAX = 64
 
 
+def _is_printable_ascii(s: str) -> bool:
+    return all(0x20 <= ord(c) <= 0x7E for c in s)
+
+
+def _validate_field(value: str, field_name: str, max_len: int, *, required: bool = True) -> None:
+    if required and (not value or not value.strip()):
+        raise ValueError(f"{field_name} must not be empty")
+    if len(value) > max_len:
+        raise ValueError(f"{field_name} must be {max_len} characters or fewer")
+    if not _is_printable_ascii(value):
+        raise ValueError(
+            f"{field_name} must contain only printable ASCII characters (no control characters)"
+        )
+
+
 def _validate_id(id_value: str) -> None:
     """Validate a topic ID. Server-generated IDs are UUIDs, but the check is permissive
     enough that any reasonable opaque string passes — only obviously malformed input is
     rejected before reaching the DB."""
-    if not id_value or not id_value.strip():
-        raise ValueError("id must not be empty")
-    if len(id_value) > _ID_MAX:
-        raise ValueError(f"id must be {_ID_MAX} characters or fewer")
-    if not all(0x20 <= ord(c) <= 0x7E for c in id_value):
-        raise ValueError("id must contain only printable ASCII characters (no control characters)")
+    _validate_field(id_value, "id", _ID_MAX)
 
 
 def _validate_title(title: str) -> None:
-    if not title or not title.strip():
-        raise ValueError("title must not be empty")
-    if len(title) > _TITLE_MAX:
-        raise ValueError(f"title must be {_TITLE_MAX} characters or fewer")
-    if not all(0x20 <= ord(c) <= 0x7E for c in title):
-        raise ValueError(
-            "title must contain only printable ASCII characters (no control characters)"
-        )
+    _validate_field(title, "title", _TITLE_MAX)
 
 
 def _validate_scope(scope: str) -> None:
@@ -213,13 +216,7 @@ def _validate_scope(scope: str) -> None:
 
 
 def _validate_notes(notes: str) -> None:
-    """Validate notes when non-empty. Empty string means 'no notes provided'."""
-    if len(notes) > _NOTES_MAX:
-        raise ValueError(f"notes must be {_NOTES_MAX} characters or fewer")
-    if not all(0x20 <= ord(c) <= 0x7E for c in notes):
-        raise ValueError(
-            "notes must contain only printable ASCII characters (no control characters)"
-        )
+    _validate_field(notes, "notes", _NOTES_MAX, required=False)
 
 
 @mcp.tool(

@@ -3,7 +3,7 @@ import pathlib
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,27 @@ class Topic(NamedTuple):
             "notes": self.notes,
             "status": self.status,
         }
+
+
+def _topic_from_row(row: tuple[Any, ...]) -> Topic:
+    return Topic(
+        id=row[0],
+        title=row[1],
+        scope=row[2],
+        added_at=row[3],
+        last_checked_at=row[4],
+        notes=row[5],
+        status=row[6],
+    )
+
+
+def _fetch_topic(conn: sqlite3.Connection, topic_id: str) -> Topic | None:
+    row = conn.execute(
+        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
+        " FROM topics WHERE id = ?",
+        (topic_id,),
+    ).fetchone()
+    return _topic_from_row(row) if row is not None else None
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -174,30 +195,8 @@ def list_topics(
             [now, *ids],
         )
         conn.commit()
-        return [
-            Topic(
-                id=r[0],
-                title=r[1],
-                scope=r[2],
-                added_at=r[3],
-                last_checked_at=now,
-                notes=r[5],
-                status=r[6],
-            )
-            for r in rows
-        ]
-    return [
-        Topic(
-            id=r[0],
-            title=r[1],
-            scope=r[2],
-            added_at=r[3],
-            last_checked_at=r[4],
-            notes=r[5],
-            status=r[6],
-        )
-        for r in rows
-    ]
+        return [_topic_from_row(r)._replace(last_checked_at=now) for r in rows]
+    return [_topic_from_row(r) for r in rows]
 
 
 def update_topic(
@@ -231,11 +230,6 @@ def update_topic(
     if cursor.rowcount == 0:
         logger.warning("update_topic: id=%s not found", topic_id)
         return None
-    row = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
-        " FROM topics WHERE id = ?",
-        (topic_id,),
-    ).fetchone()
     logger.info(
         "Updated topic id=%s title=%r scope=%r notes_updated=%r",
         topic_id,
@@ -243,15 +237,7 @@ def update_topic(
         scope,
         update_notes,
     )
-    return Topic(
-        id=row[0],
-        title=row[1],
-        scope=row[2],
-        added_at=row[3],
-        last_checked_at=row[4],
-        notes=row[5],
-        status=row[6],
-    )
+    return _fetch_topic(conn, topic_id)
 
 
 def archive_topic(conn: sqlite3.Connection, topic_id: str, archived: bool) -> Topic | None:
@@ -261,21 +247,8 @@ def archive_topic(conn: sqlite3.Connection, topic_id: str, archived: bool) -> To
     if cursor.rowcount == 0:
         logger.warning("archive_topic: id=%s not found", topic_id)
         return None
-    row = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
-        " FROM topics WHERE id = ?",
-        (topic_id,),
-    ).fetchone()
     logger.info("archive_topic: id=%s archived=%r", topic_id, archived)
-    return Topic(
-        id=row[0],
-        title=row[1],
-        scope=row[2],
-        added_at=row[3],
-        last_checked_at=row[4],
-        notes=row[5],
-        status=row[6],
-    )
+    return _fetch_topic(conn, topic_id)
 
 
 def remove_topic(conn: sqlite3.Connection, topic_id: str) -> bool:
