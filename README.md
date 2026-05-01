@@ -88,12 +88,13 @@ CLI arguments take precedence over environment variables.
 |---|---|---|
 | `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `streamable-http` |
 | `INTERESTING_DB_PATH` | `data/interesting.db` | Path to the SQLite database file |
+| `INTERESTING_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated allowed `Host` header values; add your server's hostname for HTTP mode |
 
 ### Authentication (HTTP mode only)
 
 When running in `streamable-http` mode, set all three credential variables to enable OAuth 2.0
-Client Credentials authentication. If any are absent the server starts without auth (appropriate
-for stdio / local dev).
+Authorization Code + PKCE authentication. If any are absent the server starts without auth
+(appropriate for stdio / local dev).
 
 | Variable | Description |
 |---|---|
@@ -114,4 +115,4 @@ In the Claude custom connector settings, enter your server URL and set:
 - **OAuth Client ID**: value of `INTERESTING_CLIENT_ID`
 - **OAuth Client Secret**: value of `INTERESTING_CLIENT_SECRET`
 
-Claude will POST to `<server-url>/token` to fetch a bearer token before connecting.
+Claude will perform the Authorization Code + PKCE flow — redirecting to `/authorize` then exchanging the code at `/token` — before connecting.

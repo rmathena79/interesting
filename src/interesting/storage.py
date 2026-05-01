@@ -3,7 +3,7 @@ import pathlib
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,8 @@ _CONTAINED_SCOPES: dict[str, set[str]] = {
 }
 
 KNOWN_SCOPES: frozenset[str] = frozenset({DEFAULT_SCOPE} | set(_CONTAINED_SCOPES.keys()))
-KNOWN_STATUSES: frozenset[str] = frozenset({"active", "archived"})
+_STATUS_ACTIVE = "active"
+_STATUS_ARCHIVED = "archived"
 
 
 def get_scope_hierarchy() -> dict[str, list[str]]:
@@ -51,6 +52,27 @@ class Topic(NamedTuple):
         }
 
 
+def _topic_from_row(row: tuple[Any, ...]) -> Topic:
+    return Topic(
+        id=row[0],
+        title=row[1],
+        scope=row[2],
+        added_at=row[3],
+        last_checked_at=row[4],
+        notes=row[5],
+        status=row[6],
+    )
+
+
+def _fetch_topic(conn: sqlite3.Connection, topic_id: str) -> Topic | None:
+    row = conn.execute(
+        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
+        " FROM topics WHERE id = ?",
+        (topic_id,),
+    ).fetchone()
+    return _topic_from_row(row) if row is not None else None
+
+
 def init_db(db_path: str) -> sqlite3.Connection:
     pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Opening SQLite database at %s", db_path)
@@ -69,7 +91,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
 
     row = conn.execute("SELECT version FROM schema_version").fetchone()
     version = row[0] if row else 0
-    needs_version_update = row is None
+    needs_version_update = row is None  # legacy detection may skip all migration blocks
 
     if version == 0:
         # Detect databases migrated before version tracking was introduced.
@@ -108,11 +130,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
 def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | None = None) -> Topic:
     topic_id = str(uuid.uuid4())
     added_at = datetime.now(timezone.utc).isoformat()
-    stored_notes = notes if notes else None
     conn.execute(
         "INSERT INTO topics (id, title, scope, added_at, notes, status)"
-        " VALUES (?, ?, ?, ?, ?, 'active')",
-        (topic_id, title, scope, added_at, stored_notes),
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (topic_id, title, scope, added_at, notes, _STATUS_ACTIVE),
     )
     conn.commit()
     logger.info("Added topic id=%s title=%r scope=%r", topic_id, title, scope)
@@ -122,8 +143,8 @@ def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | Non
         scope=scope,
         added_at=added_at,
         last_checked_at=None,
-        notes=stored_notes,
-        status="active",
+        notes=notes,
+        status=_STATUS_ACTIVE,
     )
 
 
@@ -143,7 +164,8 @@ def list_topics(
         params.extend(sorted(included))
 
     if not include_archived:
-        conditions.append("status = 'active'")
+        conditions.append("status = ?")
+        params.append(_STATUS_ACTIVE)
 
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -174,30 +196,8 @@ def list_topics(
             [now, *ids],
         )
         conn.commit()
-        return [
-            Topic(
-                id=r[0],
-                title=r[1],
-                scope=r[2],
-                added_at=r[3],
-                last_checked_at=now,
-                notes=r[5],
-                status=r[6],
-            )
-            for r in rows
-        ]
-    return [
-        Topic(
-            id=r[0],
-            title=r[1],
-            scope=r[2],
-            added_at=r[3],
-            last_checked_at=r[4],
-            notes=r[5],
-            status=r[6],
-        )
-        for r in rows
-    ]
+        return [_topic_from_row(r)._replace(last_checked_at=now) for r in rows]
+    return [_topic_from_row(r) for r in rows]
 
 
 def update_topic(
@@ -231,11 +231,6 @@ def update_topic(
     if cursor.rowcount == 0:
         logger.warning("update_topic: id=%s not found", topic_id)
         return None
-    row = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
-        " FROM topics WHERE id = ?",
-        (topic_id,),
-    ).fetchone()
     logger.info(
         "Updated topic id=%s title=%r scope=%r notes_updated=%r",
         topic_id,
@@ -243,39 +238,18 @@ def update_topic(
         scope,
         update_notes,
     )
-    return Topic(
-        id=row[0],
-        title=row[1],
-        scope=row[2],
-        added_at=row[3],
-        last_checked_at=row[4],
-        notes=row[5],
-        status=row[6],
-    )
+    return _fetch_topic(conn, topic_id)
 
 
 def archive_topic(conn: sqlite3.Connection, topic_id: str, archived: bool) -> Topic | None:
-    status = "archived" if archived else "active"
+    status = _STATUS_ARCHIVED if archived else _STATUS_ACTIVE
     cursor = conn.execute("UPDATE topics SET status = ? WHERE id = ?", (status, topic_id))
     conn.commit()
     if cursor.rowcount == 0:
         logger.warning("archive_topic: id=%s not found", topic_id)
         return None
-    row = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
-        " FROM topics WHERE id = ?",
-        (topic_id,),
-    ).fetchone()
     logger.info("archive_topic: id=%s archived=%r", topic_id, archived)
-    return Topic(
-        id=row[0],
-        title=row[1],
-        scope=row[2],
-        added_at=row[3],
-        last_checked_at=row[4],
-        notes=row[5],
-        status=row[6],
-    )
+    return _fetch_topic(conn, topic_id)
 
 
 def remove_topic(conn: sqlite3.Connection, topic_id: str) -> bool:
