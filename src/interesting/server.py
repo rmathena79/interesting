@@ -403,4 +403,10 @@ if __name__ == "__main__":
             "Running in HTTP mode without auth; set INTERESTING_CLIENT_ID, "
             "INTERESTING_CLIENT_SECRET, and INTERESTING_ACCESS_TOKEN to enable auth"
         )
-    mcp.run(transport=transport)
+    try:
+        mcp.run(transport=transport)
+    except KeyboardInterrupt:
+        logger.info("Server stopped")
+    except SystemExit as e:
+        if e.code not in (0, None):
+            raise
