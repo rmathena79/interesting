@@ -130,7 +130,7 @@ Parameters:
 - `id` (string, required): UUID of the topic to update. Copy from `list_topics` or `add_topic` output.
 - `title` (string, optional): New title. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`.
 - `scope` (string, optional): New scope. Must be a known scope (see `list_scopes`). Omit or pass empty string to leave unchanged.
-- `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Note: there is no way to clear notes via this tool once set — use `archive_topic` if the story is over.
+- `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Notes cannot be cleared once set; if the story has concluded, use `archive_topic` rather than trying to erase notes.
 
 At least one of `title`, `scope`, or `notes` must be provided.
 

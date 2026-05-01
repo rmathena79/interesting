@@ -112,7 +112,7 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 ## Roundup Rotation
 
-`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode. The query orders by `last_checked_at ASC NULLS FIRST, RANDOM()` and applies a `LIMIT 6`. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
+`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode. The query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT 6`. SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
 
 ## Connection Lifecycle and Testing
 
@@ -131,18 +131,17 @@ Transport is selected via the `--transport` CLI argument or `MCP_TRANSPORT` envi
 
 ## Authentication
 
-HTTP mode supports OAuth 2.0 Client Credentials authentication, opt-in via three environment variables. Auth is disabled when any of the three are absent, which is the correct default for stdio mode and local dev.
+HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via three environment variables. Auth is disabled when any of the three are absent, which is the correct default for stdio mode and local dev.
 
 ### Token flow
 
-1. Claude POSTs `grant_type=client_credentials` + `client_id` + `client_secret` to `/token`.
-2. The server validates the credentials and returns a static bearer token.
-3. Claude sends `Authorization: Bearer <token>` with every subsequent MCP request.
-4. `_StaticTokenVerifier.verify_token()` validates the token; the SDK's `BearerAuthBackend` + `RequireAuthMiddleware` enforce it on the MCP endpoint.
+1. Claude discovers the OAuth server metadata and redirects to the server's `/authorize` endpoint to initiate the Authorization Code + PKCE flow.
+2. The server auto-approves the request (security relies on network-level access control, e.g. Tailscale) and redirects back to Claude's callback URL with a short-lived authorization code (TTL: 5 minutes).
+3. Claude POSTs the authorization code and PKCE verifier to `/token` and receives a static bearer token (TTL: 24 hours).
+4. Claude includes `Authorization: Bearer <token>` on every subsequent MCP request.
+5. `_SingleUserOAuthProvider.load_access_token()` validates the token using `secrets.compare_digest` (constant-time comparison).
 
-The `/token` route is registered via `@mcp.custom_route` (always public, as required by the OAuth flow). The MCP route at `"/"` is wrapped by `RequireAuthMiddleware` when a `token_verifier` is configured.
-
-Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
+`_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
 
 ## Configuration
 
@@ -150,7 +149,7 @@ Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are rea
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
 | Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_CLIENT_SECRET`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
-| Defaults | Lowest | `stdio`, `data/interesting.db`, auth disabled |
+| Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled |
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.
 
