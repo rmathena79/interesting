@@ -42,9 +42,9 @@ All database access is through plain functions that take a `sqlite3.Connection` 
 | Function | Purpose |
 |---|---|
 | `init_db(db_path)` | Opens/creates the database, runs schema migrations, returns the connection |
-| `add_topic(conn, title, scope, notes)` | Inserts a new topic, returns a `Topic` |
-| `list_topics(conn, scope, roundup, include_archived)` | Queries topics with optional scope filter, roundup logic, and archived filter |
-| `update_topic(conn, topic_id, title, scope, notes, update_notes)` | Updates fields, returns the updated `Topic` or `None` |
+| `add_topic(conn, title, scope, notes, cadence)` | Inserts a new topic, returns a `Topic` |
+| `list_topics(conn, scope, roundup, include_archived)` | Queries topics with optional scope filter, roundup logic (cadence-eligibility filter + rotation), and archived filter |
+| `update_topic(conn, topic_id, title, scope, notes, update_notes, cadence)` | Updates fields, returns the updated `Topic` or `None` |
 | `archive_topic(conn, topic_id, archived)` | Sets status to `"archived"` or `"active"`, returns the updated `Topic` or `None` |
 | `remove_topic(conn, topic_id)` | Deletes by ID, returns success bool |
 | `get_scope_hierarchy()` | Returns the containment map; no database access |
@@ -72,6 +72,7 @@ class Topic(NamedTuple):
     last_checked_at: str | None  # ISO 8601 UTC; null until first roundup inclusion
     notes: str | None     # optional search guidance, printable ASCII ≤512 chars; null if unset
     status: str           # "active" (default) or "archived"
+    cadence: str          # one of KNOWN_CADENCES; "regular" default for new topics
 ```
 
 `Topic.to_dict()` produces the canonical JSON-serializable dict returned by all tools.
@@ -85,14 +86,17 @@ CREATE TABLE topics (
     id              TEXT PRIMARY KEY,
     title           TEXT NOT NULL,
     scope           TEXT NOT NULL,
-    added_at        TEXT,                        -- added in migration 1
-    last_checked_at TEXT,                        -- added in migration 2
-    notes           TEXT,                        -- added in migration 3
-    status          TEXT NOT NULL DEFAULT 'active'  -- added in migration 3
+    added_at        TEXT,                              -- added in migration 1
+    last_checked_at TEXT,                              -- added in migration 2
+    notes           TEXT,                              -- added in migration 3
+    status          TEXT NOT NULL DEFAULT 'active',    -- added in migration 3
+    cadence         TEXT NOT NULL DEFAULT 'frequent'   -- added in migration 4
 );
 ```
 
-`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 3` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the highest migration level whose columns are all present.
+`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 4` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the highest migration level whose columns are all present.
+
+The `cadence` column's column-level default of `'frequent'` only fires for rows pre-existing at v3-to-v4 migration time; new rows inserted by `add_topic` use `DEFAULT_CADENCE = 'regular'` from the application layer.
 
 SQLite is opened in WAL mode (`PRAGMA journal_mode=WAL`) to allow concurrent reads alongside writes.
 
@@ -112,7 +116,13 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 ## Roundup Rotation
 
-`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode. The query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT 6`. SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
+`list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode.
+
+Eligibility runs as a SQL filter before rotation: a topic is eligible when its cadence is `'always'`, when `last_checked_at IS NULL`, or when `last_checked_at <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. The clause is built from `_CADENCE_DAYS` once at module load (`_CADENCE_ELIGIBILITY_CLAUSE`) and appended to the WHERE conditions only when `roundup=True`. SQLite's `datetime('now', ...)` is UTC, matching the `+00:00`-suffixed ISO 8601 timestamps written by `add_topic` and roundup updates, so lexicographic `<=` comparison is correct.
+
+After eligibility filtering, the query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT 6`. SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE; if eligibility filtering returns zero rows, the update is skipped. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
+
+The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs.
 
 ## Connection Lifecycle and Testing
 

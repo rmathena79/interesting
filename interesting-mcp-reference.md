@@ -41,6 +41,8 @@ Bad notes (don't do this):
 
 Notes are optional. When absent, the title alone drives search. Notes are shown in `list_topics` output so you can review them before a roundup.
 
+If a roundup turns up a sharper framing, an alternate name, or a key entity that would help future searches, consider calling `update_topic` to refine the notes — small refinements over time keep search guidance current as a story evolves.
+
 ## Scope
 
 Each topic has a `scope` field indicating its geographic or domain footprint. The server does not interpret scope - it only stores and returns it. The client uses scope to decide which topics to include when the user asks for news.
@@ -70,6 +72,24 @@ When the user asks for news with no scope qualifier, default to all topics.
 When calling `add_topic`, pick the narrowest scope the story fits in. A Portland city council vote is `pdx`, not `us`. A federal subpoena is `us`, not `world`. A foreign conflict or international treaty is `world`.
 
 If you are unsure, ask the user or default to `world` and let them correct it.
+
+## Cadence
+
+Each topic has a `cadence` field that controls how often it is eligible for inclusion in a roundup. In roundup mode the server filters out topics still within their cadence cooldown before applying the rotation/limit, so slow-moving stories don't crowd out faster-moving ones (or genuinely new search territory).
+
+### Values
+
+- `rare` — stories that update every couple weeks or less; long-running investigations, slow regulatory processes, periodic reports.
+- `occasional` — weekly-ish stories; ongoing legal cases between hearings, multi-week negotiations, gradually unfolding situations.
+- `regular` — every few days; the default. Use this when you don't have a strong reason to pick another value.
+- `frequent` — daily-ish; active campaigns, breaking-but-paced stories, fast-moving product launches, ongoing conflicts.
+- `always` — no minimum interval; the topic is eligible for every roundup. Reserve for stories where every roundup should re-check (e.g. a high-priority crisis the user explicitly wants tracked closely).
+
+### Choosing a cadence
+
+Default to `regular`. Step up to `frequent` for breaking or fast-moving stories, step down to `occasional` or `rare` for stories that update slowly. Use `always` sparingly — it bypasses the cooldown entirely and can crowd out other tracked topics.
+
+Cadence can be changed at any time via `update_topic`. As a story's tempo changes (a court case wraps, an investigation goes quiet, a regulator schedules new hearings), revise its cadence so the rotation matches the actual pace of new developments.
 
 ## Topic status
 
@@ -104,8 +124,9 @@ Parameters:
 - `title` (string, required): Printable ASCII, non-empty, max 128 chars. No control characters.
 - `scope` (string, optional): Must be a known scope (see `list_scopes`). Defaults to `"world"`. Pick the narrowest known scope that contains the story.
 - `notes` (string, optional): Printable ASCII, max 512 chars. Search guidance for the AI assistant — see Notes field section above. Omit if no guidance is needed.
+- `cadence` (string, optional): One of `rare`, `occasional`, `regular`, `frequent`, `always`. Defaults to `regular`. See the Cadence section above for what each value means.
 
-Returns: `{"id": "...", "title": "...", "scope": "...", "added_at": "...", "last_checked_at": null, "notes": null, "status": "active"}`
+Returns: `{"id": "...", "title": "...", "scope": "...", "added_at": "...", "last_checked_at": null, "notes": null, "status": "active", "cadence": "regular"}`
 
 Confirm addition briefly to the user, including the scope so they can correct it. Do not surface the UUID unless asked.
 
@@ -115,15 +136,16 @@ Parameters:
 - `roundup` (boolean, optional, default `false`): Set to `true` when calling as part of a news roundup. See rotation behavior below.
 - `include_archived` (boolean, optional, default `false`): Set to `true` to include archived topics in the result. Normally omit this — archived topics should not appear in roundups.
 
-**Without `roundup=true`:** Returns all matching active topics sorted by title.
+**Without `roundup=true`:** Returns all matching active topics sorted by title. Cadence does not affect this mode.
 
-**With `roundup=true` (rotation mode):** Returns at most 6 active topics, prioritizing those least recently checked — topics with `last_checked_at = null` first, then oldest checked, with random tiebreaking among equals. The server records `last_checked_at` for every returned topic. This ensures that over successive roundup calls, all tracked topics are visited in rotation rather than the same topics being returned every time.
+**With `roundup=true` (rotation mode):** Returns at most 6 active topics, prioritizing those least recently checked — topics with `last_checked_at = null` first, then oldest checked, with random tiebreaking among equals. Topics still within their cadence cooldown are filtered out before the rotation/limit runs, so the result may contain fewer than 6 topics — or be empty — when everything tracked has been checked recently. The server records `last_checked_at` for every returned topic. This ensures that over successive roundup calls, all tracked topics are visited in rotation rather than the same topics being returned every time.
 
-Returns: JSON array of `{id, title, scope, added_at, last_checked_at, notes, status}` objects. Empty array if nothing is tracked.
+Returns: JSON array of `{id, title, scope, added_at, last_checked_at, notes, status, cadence}` objects. Empty array if nothing is tracked or if all eligible topics are still within their cadence cooldown.
 - `added_at`: ISO 8601 UTC timestamp set when the topic was added; `null` for topics added before this field existed.
 - `last_checked_at`: ISO 8601 UTC timestamp of the last `roundup=true` call that returned this topic; `null` if the topic has never been included in a roundup query. This records when the topic was last queried as part of a roundup — not whether new information was found.
 - `notes`: Search guidance string, or `null` if no notes were recorded. Review notes before searching — they refine your query angle.
 - `status`: `"active"` or `"archived"`. Under default parameters only `"active"` topics are returned.
+- `cadence`: One of `rare`, `occasional`, `regular`, `frequent`, `always`. See the Cadence section above.
 
 ### `update_topic`
 Parameters:
@@ -131,10 +153,11 @@ Parameters:
 - `title` (string, optional): New title. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`.
 - `scope` (string, optional): New scope. Must be a known scope (see `list_scopes`). Omit or pass empty string to leave unchanged.
 - `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Notes cannot be cleared once set; if the story has concluded, use `archive_topic` rather than trying to erase notes.
+- `cadence` (string, optional): New cadence. Must be one of `rare`, `occasional`, `regular`, `frequent`, `always`. Omit or pass empty string to leave unchanged. Adjust as a story's pace changes.
 
-At least one of `title`, `scope`, or `notes` must be provided.
+At least one of `title`, `scope`, `notes`, or `cadence` must be provided.
 
-Returns: `{id, title, scope, added_at, last_checked_at, notes, status}` reflecting the updated state. `added_at`, `last_checked_at`, and `status` are never modified by this call.
+Returns: `{id, title, scope, added_at, last_checked_at, notes, status, cadence}` reflecting the updated state. `added_at`, `last_checked_at`, and `status` are never modified by this call.
 
 ### `archive_topic`
 Parameters:
@@ -183,6 +206,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | "X story is over / concluded / resolved" | `archive_topic` | Archive rather than remove |
 | "reactivate X", "X is back in the news" | `archive_topic(id, archived=false)` | Reactivate an archived topic |
 | "add context to X", "note that X focuses on Y" | `update_topic` with notes | Record search guidance in the notes field |
+| "check X more / less often", "X is heating up / quieting down" | `update_topic` with cadence | Adjust cadence to match the story's tempo |
 
 ### News Roundup
 
@@ -194,7 +218,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | timeframe | `Xh` or `Xd` (hours/days) | `48h` |
 
 **Workflow:**
-1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns at most 6 active topics (those least recently checked), applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup — this is by design.
+1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns at most 6 active topics (those least recently checked) after filtering out any still within their cadence cooldown, applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup — this is by design. The result may contain fewer than 6 topics, or be empty, when everything tracked has been checked recently.
 2. For each returned topic, review its `notes` field before searching. Use notes to sharpen the search query — adjust angle, include alternate names, exclude irrelevant terms.
 3. Search for new developments on each returned tracked topic within the requested timeframe.
 4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
