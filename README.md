@@ -69,6 +69,43 @@ connect via streamable HTTP:
 {"url": "http://localhost:8000/"}
 ```
 
+## Deployment (Windows)
+
+Use `deploy.ps1` to install the server into a separate production directory, isolated from the dev repo.
+
+### First-time setup
+
+```powershell
+# From the dev repo root:
+.\deploy.ps1 -DestDir C:\path\to\interesting-prod
+```
+
+This copies the server source, creates a `.venv`, and installs the package. Tests, dev tooling, and the dev database are not copied.
+
+Then create a `.env` in the production directory:
+
+```powershell
+Copy-Item .env.example C:\path\to\interesting-prod\.env
+# Edit .env — at minimum, set MCP_TRANSPORT and the OAuth credentials for HTTP mode
+```
+
+### Launching
+
+Double-click `launch.bat` in the production directory (or create a Windows shortcut to it for one-click access). This opens a minimized console window in the taskbar; restore it to see live log output. The window stays open if the server exits, so errors remain visible.
+
+The database (`data\interesting.db`) is created in the production directory on first launch.
+
+### Updating
+
+After making changes in the dev repo, re-run `deploy.ps1` and restart the server:
+
+```powershell
+.\deploy.ps1 -DestDir C:\path\to\interesting-prod
+# Then stop the server (close its console window) and launch again
+```
+
+`deploy.ps1` is safe to re-run: it mirrors source files and reinstalls the package without touching `.env` or `data\`.
+
 ## Configuration
 
 ### CLI Arguments
