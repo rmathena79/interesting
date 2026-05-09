@@ -1,5 +1,6 @@
 import json
 import pathlib
+import sqlite3
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -11,9 +12,10 @@ from interesting.server import mcp
 
 
 @pytest.fixture(autouse=True)
-def isolated_db(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_db(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> str:
     db_file = str(tmp_path / "test.db")
     monkeypatch.setattr(server_module, "_db_path", db_file)
+    return db_file
 
 
 async def test_add_topic_default_scope() -> None:
@@ -832,3 +834,286 @@ async def test_get_instructions_tool_returns_same_content() -> None:
     tool_text = tool_result.content[0].text  # type: ignore[union-attr]
     resource_text = resource_result.contents[0].text  # type: ignore[union-attr]
     assert tool_text == resource_text
+
+
+# --- cadence tests ---
+
+
+def _backdate_last_checked(db_path: str, topic_id: str, days_ago: int) -> None:
+    """Set a topic's last_checked_at to N days before now (UTC), via a direct SQL write.
+
+    Used to simulate a topic being checked some time ago without waiting real time.
+    Opens a separate sqlite3 connection; safe alongside the lifespan's connection
+    because the database is opened in WAL mode.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE topics SET last_checked_at = datetime('now', ?) WHERE id = ?",
+            (f"-{days_ago} days", topic_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def test_add_topic_default_cadence() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Default cadence"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["cadence"] == "regular"
+
+
+async def test_add_topic_explicit_cadences() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        for value in ("rare", "occasional", "regular", "frequent", "always"):
+            result = await client.call_tool(
+                "add_topic", {"title": f"Topic {value}", "cadence": value}
+            )
+            assert not result.isError, value
+            data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+            assert data["cadence"] == value
+
+
+async def test_add_topic_unknown_cadence_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Bad cadence", "cadence": "monthly"})
+    assert result.isError
+
+
+async def test_add_topic_empty_cadence_uses_default() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "Topic", "cadence": ""})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["cadence"] == "regular"
+
+
+async def test_update_topic_cadence() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Pace shifter"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "cadence": "frequent"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["cadence"] == "frequent"
+
+
+async def test_update_topic_unknown_cadence_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "cadence": "monthly"})
+    assert result.isError
+
+
+async def test_update_topic_omitting_cadence_leaves_unchanged() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Stable", "cadence": "rare"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "title": "Renamed"})
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["cadence"] == "rare"
+    assert data[0]["title"] == "Renamed"
+
+
+async def test_update_topic_cadence_only_satisfies_at_least_one() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "cadence": "frequent"})
+    assert not result.isError
+
+
+async def test_list_topics_includes_cadence() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Topic", "cadence": "occasional"})
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["cadence"] == "occasional"
+
+
+async def test_roundup_excludes_topic_within_cooldown(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Slow burner", "cadence": "rare"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate to 5 days ago — well inside the 14-day cooldown for 'rare'.
+        _backdate_last_checked(isolated_db, topic_id, days_ago=5)
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data == []
+
+
+async def test_roundup_includes_topic_after_cooldown(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Slow burner", "cadence": "rare"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate to 15 days ago — past the 14-day cooldown for 'rare'.
+        _backdate_last_checked(isolated_db, topic_id, days_ago=15)
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id
+
+
+async def test_roundup_always_cadence_ignores_cooldown(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "High priority", "cadence": "always"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate by less than a day — for 'always', cooldown is irrelevant.
+        _backdate_last_checked(isolated_db, topic_id, days_ago=0)
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id
+
+
+async def test_roundup_null_last_checked_eligible_regardless_of_cadence() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        # Brand-new 'rare' topic — never checked, so should still be eligible.
+        await client.call_tool("add_topic", {"title": "Fresh rare", "cadence": "rare"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+
+
+async def test_roundup_all_in_cooldown_returns_empty_and_no_stamp(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_a = await client.call_tool("add_topic", {"title": "A", "cadence": "rare"})
+        id_a = json.loads(add_a.content[0].text)["id"]  # type: ignore[union-attr]
+        add_b = await client.call_tool("add_topic", {"title": "B", "cadence": "occasional"})
+        id_b = json.loads(add_b.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate both to within their cooldowns.
+        _backdate_last_checked(isolated_db, id_a, days_ago=2)
+        _backdate_last_checked(isolated_db, id_b, days_ago=2)
+        # Capture pre-roundup last_checked_at.
+        pre_list = await client.call_tool("list_topics", {})
+        pre_data = json.loads(pre_list.content[0].text)  # type: ignore[union-attr]
+        pre_stamps = {t["id"]: t["last_checked_at"] for t in pre_data}
+        # Roundup should return empty.
+        roundup = await client.call_tool("list_topics", {"roundup": True})
+        assert json.loads(roundup.content[0].text) == []  # type: ignore[union-attr]
+        # last_checked_at must be unchanged.
+        post_list = await client.call_tool("list_topics", {})
+        post_data = json.loads(post_list.content[0].text)  # type: ignore[union-attr]
+    post_stamps = {t["id"]: t["last_checked_at"] for t in post_data}
+    assert post_stamps == pre_stamps
+
+
+async def test_roundup_mixed_cadences_filters_only_ineligible(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        cooldown_add = await client.call_tool(
+            "add_topic", {"title": "In cooldown", "cadence": "rare"}
+        )
+        cooldown_id = json.loads(cooldown_add.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("add_topic", {"title": "Eligible fresh", "cadence": "regular"})
+        _backdate_last_checked(isolated_db, cooldown_id, days_ago=3)
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    titles = {t["title"] for t in data}
+    assert titles == {"Eligible fresh"}
+
+
+async def test_list_topics_non_roundup_unaffected_by_cadence(isolated_db: str) -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        cooldown_add = await client.call_tool(
+            "add_topic", {"title": "Cooling off", "cadence": "rare"}
+        )
+        cooldown_id = json.loads(cooldown_add.content[0].text)["id"]  # type: ignore[union-attr]
+        _backdate_last_checked(isolated_db, cooldown_id, days_ago=2)
+        result = await client.call_tool("list_topics", {})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["title"] == "Cooling off"
+
+
+def test_migration_v3_to_v4_backfills_frequent(tmp_path: pathlib.Path) -> None:
+    """A v3 database opened by the new init_db gets cadence='frequent' on existing rows."""
+    db_path = str(tmp_path / "v3.db")
+    # Build a v3-shaped database by hand: schema_version=3 and topics columns up to status.
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        raw.execute("INSERT INTO schema_version (version) VALUES (3)")
+        raw.execute(
+            """
+            CREATE TABLE topics (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                scope           TEXT NOT NULL,
+                added_at        TEXT,
+                last_checked_at TEXT,
+                notes           TEXT,
+                status          TEXT NOT NULL DEFAULT 'active'
+            )
+            """
+        )
+        raw.execute(
+            "INSERT INTO topics (id, title, scope, added_at, status)"
+            " VALUES ('legacy-id', 'Legacy topic', 'world', '2024-01-01T00:00:00+00:00', 'active')"
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = storage.init_db(db_path)
+    try:
+        version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+        assert version == 4
+        cadence = conn.execute("SELECT cadence FROM topics WHERE id = 'legacy-id'").fetchone()[0]
+        assert cadence == "frequent"
+    finally:
+        conn.close()
+
+
+def test_migration_legacy_v3_columns_detected(tmp_path: pathlib.Path) -> None:
+    """A pre-versioning database with v3-shaped columns gets the v4 migration applied."""
+    db_path = str(tmp_path / "legacy.db")
+    raw = sqlite3.connect(db_path)
+    try:
+        # No schema_version table yet — exact pre-versioning state.
+        raw.execute(
+            """
+            CREATE TABLE topics (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                scope           TEXT NOT NULL,
+                added_at        TEXT,
+                last_checked_at TEXT,
+                notes           TEXT,
+                status          TEXT NOT NULL DEFAULT 'active'
+            )
+            """
+        )
+        raw.execute(
+            "INSERT INTO topics (id, title, scope, status)"
+            " VALUES ('old-id', 'Old topic', 'world', 'active')"
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = storage.init_db(db_path)
+    try:
+        version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+        assert version == 4
+        cadence = conn.execute("SELECT cadence FROM topics WHERE id = 'old-id'").fetchone()[0]
+        assert cadence == "frequent"
+    finally:
+        conn.close()
+
+
+async def test_instructions_resource_mentions_cadence() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.read_resource(AnyUrl("interesting://instructions"))
+    text = result.contents[0].text  # type: ignore[union-attr]
+    for keyword in ("cadence", "rare", "occasional", "regular", "frequent", "always"):
+        assert keyword in text, f"instructions missing cadence keyword: {keyword!r}"
