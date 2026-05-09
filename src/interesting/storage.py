@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SCOPE = "world"
 _ROUNDUP_LIMIT = 6
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 # Maps a requested scope to the set of stored scopes it includes.
 # DEFAULT_SCOPE ("world") is not listed — it means no filter (return all topics).
@@ -21,6 +21,39 @@ _CONTAINED_SCOPES: dict[str, set[str]] = {
 KNOWN_SCOPES: frozenset[str] = frozenset({DEFAULT_SCOPE} | set(_CONTAINED_SCOPES.keys()))
 _STATUS_ACTIVE = "active"
 _STATUS_ARCHIVED = "archived"
+
+# Cadence: minimum days between roundup inclusions for a topic. None means "no minimum".
+_CADENCE_DAYS: dict[str, int | None] = {
+    "rare": 14,
+    "occasional": 7,
+    "regular": 3,
+    "frequent": 1,
+    "always": None,
+}
+KNOWN_CADENCES: frozenset[str] = frozenset(_CADENCE_DAYS.keys())
+DEFAULT_CADENCE = "regular"  # default for new topics
+_MIGRATION_CADENCE = "frequent"  # backfill for existing rows in the v4 migration
+
+
+def _build_cadence_eligibility_clause() -> str:
+    """SQL fragment that selects topics eligible for inclusion in a roundup.
+
+    A topic is eligible if its cadence is 'always', if it has never been checked
+    (last_checked_at IS NULL), or if its last check was at least the cadence's
+    minimum-interval days ago. SQLite's datetime('now', ...) is UTC, matching the
+    timezone-aware ISO 8601 strings written by add_topic / list_topics.
+    """
+    parts = ["cadence = 'always'", "last_checked_at IS NULL"]
+    for cadence, days in _CADENCE_DAYS.items():
+        if days is None:
+            continue
+        parts.append(
+            f"(cadence = '{cadence}' AND last_checked_at <= datetime('now', '-{days} days'))"
+        )
+    return "(" + " OR ".join(parts) + ")"
+
+
+_CADENCE_ELIGIBILITY_CLAUSE = _build_cadence_eligibility_clause()
 
 
 def get_scope_hierarchy() -> dict[str, list[str]]:
@@ -39,6 +72,7 @@ class Topic(NamedTuple):
     last_checked_at: str | None
     notes: str | None
     status: str
+    cadence: str
 
     def to_dict(self) -> dict[str, str | None]:
         return {
@@ -49,7 +83,11 @@ class Topic(NamedTuple):
             "last_checked_at": self.last_checked_at,
             "notes": self.notes,
             "status": self.status,
+            "cadence": self.cadence,
         }
+
+
+_TOPIC_COLUMNS = "id, title, scope, added_at, last_checked_at, notes, status, cadence"
 
 
 def _topic_from_row(row: tuple[Any, ...]) -> Topic:
@@ -61,13 +99,13 @@ def _topic_from_row(row: tuple[Any, ...]) -> Topic:
         last_checked_at=row[4],
         notes=row[5],
         status=row[6],
+        cadence=row[7],
     )
 
 
 def _fetch_topic(conn: sqlite3.Connection, topic_id: str) -> Topic | None:
     row = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status"
-        " FROM topics WHERE id = ?",
+        f"SELECT {_TOPIC_COLUMNS} FROM topics WHERE id = ?",
         (topic_id,),
     ).fetchone()
     return _topic_from_row(row) if row is not None else None
@@ -96,8 +134,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
     if version == 0:
         # Detect databases migrated before version tracking was introduced.
         existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(topics)").fetchall()}
-        if {"added_at", "last_checked_at", "notes", "status"}.issubset(existing_cols):
+        if {"added_at", "last_checked_at", "notes", "status", "cadence"}.issubset(existing_cols):
             version = _SCHEMA_VERSION
+        elif {"added_at", "last_checked_at", "notes", "status"}.issubset(existing_cols):
+            version = 3
         elif {"added_at", "last_checked_at"}.issubset(existing_cols):
             version = 2
 
@@ -117,6 +157,16 @@ def init_db(db_path: str) -> sqlite3.Connection:
         logger.info("Applied migration 3: added notes and status columns")
         needs_version_update = True
 
+    if version < 4:
+        conn.execute(
+            f"ALTER TABLE topics ADD COLUMN cadence TEXT NOT NULL DEFAULT '{_MIGRATION_CADENCE}'"
+        )
+        logger.info(
+            "Applied migration 4: added cadence column (existing rows default to %r)",
+            _MIGRATION_CADENCE,
+        )
+        needs_version_update = True
+
     if needs_version_update:
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (_SCHEMA_VERSION,))
@@ -127,16 +177,22 @@ def init_db(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | None = None) -> Topic:
+def add_topic(
+    conn: sqlite3.Connection,
+    title: str,
+    scope: str,
+    notes: str | None = None,
+    cadence: str = DEFAULT_CADENCE,
+) -> Topic:
     topic_id = str(uuid.uuid4())
     added_at = datetime.now(timezone.utc).isoformat()
     conn.execute(
-        "INSERT INTO topics (id, title, scope, added_at, notes, status)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (topic_id, title, scope, added_at, notes, _STATUS_ACTIVE),
+        "INSERT INTO topics (id, title, scope, added_at, notes, status, cadence)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (topic_id, title, scope, added_at, notes, _STATUS_ACTIVE, cadence),
     )
     conn.commit()
-    logger.info("Added topic id=%s title=%r scope=%r", topic_id, title, scope)
+    logger.info("Added topic id=%s title=%r scope=%r cadence=%r", topic_id, title, scope, cadence)
     return Topic(
         id=topic_id,
         title=title,
@@ -145,6 +201,7 @@ def add_topic(conn: sqlite3.Connection, title: str, scope: str, notes: str | Non
         last_checked_at=None,
         notes=notes,
         status=_STATUS_ACTIVE,
+        cadence=cadence,
     )
 
 
@@ -167,6 +224,10 @@ def list_topics(
         conditions.append("status = ?")
         params.append(_STATUS_ACTIVE)
 
+    if roundup:
+        # Filter out topics still within their cadence cooldown before rotation runs.
+        conditions.append(_CADENCE_ELIGIBILITY_CLAUSE)
+
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
     if roundup:
@@ -175,8 +236,7 @@ def list_topics(
         order_limit = " ORDER BY title"
 
     rows = conn.execute(
-        "SELECT id, title, scope, added_at, last_checked_at, notes, status FROM topics"
-        f"{where_clause}{order_limit}",
+        f"SELECT {_TOPIC_COLUMNS} FROM topics{where_clause}{order_limit}",
         params,
     ).fetchall()
     logger.info(
@@ -207,10 +267,13 @@ def update_topic(
     scope: str | None,
     notes: str | None = None,
     update_notes: bool = False,
+    cadence: str | None = None,
 ) -> Topic | None:
     """Update a topic's fields. Pass update_notes=True to write the notes value (even if None)."""
-    if title is None and scope is None and not update_notes:
-        raise ValueError("update_topic: at least one of title, scope, or notes must be provided")
+    if title is None and scope is None and not update_notes and cadence is None:
+        raise ValueError(
+            "update_topic: at least one of title, scope, notes, or cadence must be provided"
+        )
     parts: list[str] = []
     params: list[str | None] = []
     if title is not None:
@@ -222,6 +285,9 @@ def update_topic(
     if update_notes:
         parts.append("notes = ?")
         params.append(notes)
+    if cadence is not None:
+        parts.append("cadence = ?")
+        params.append(cadence)
     params.append(topic_id)
     cursor = conn.execute(
         f"UPDATE topics SET {', '.join(parts)} WHERE id = ?",
@@ -232,11 +298,12 @@ def update_topic(
         logger.warning("update_topic: id=%s not found", topic_id)
         return None
     logger.info(
-        "Updated topic id=%s title=%r scope=%r notes_updated=%r",
+        "Updated topic id=%s title=%r scope=%r notes_updated=%r cadence=%r",
         topic_id,
         title,
         scope,
         update_notes,
+        cadence,
     )
     return _fetch_topic(conn, topic_id)
 

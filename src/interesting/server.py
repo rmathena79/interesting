@@ -230,6 +230,12 @@ def _validate_notes(notes: str) -> None:
     _validate_field(notes, "notes", _NOTES_MAX, required=False)
 
 
+def _validate_cadence(cadence: str) -> None:
+    if cadence not in storage.KNOWN_CADENCES:
+        valid = ", ".join(sorted(storage.KNOWN_CADENCES))
+        raise ValueError(f"unknown cadence {cadence!r}; valid values: {valid}")
+
+
 @mcp.tool(
     description=(
         "Returns the valid scopes and their containment relationships. "
@@ -269,15 +275,31 @@ def get_instructions_tool() -> str:
     return _REFERENCE_DOC.read_text(encoding="utf-8")
 
 
-@mcp.tool(description="Adds a topic of interest and returns the created entry.")
-def add_topic(title: str, scope: str = "", notes: str = "") -> str:
-    logger.info("add_topic called title=%r scope=%r", title, scope)
+@mcp.tool(
+    description=(
+        "Adds a topic of interest and returns the created entry. "
+        "cadence controls how often the topic is eligible for roundup inclusion: "
+        "'rare' (~every two weeks), 'occasional' (~weekly), 'regular' (~every three days, "
+        "default), 'frequent' (~daily), or 'always' (no minimum interval). "
+        "Pick 'frequent' for breaking stories, 'rare' for slow-burn confirmations."
+    )
+)
+def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -> str:
+    logger.info("add_topic called title=%r scope=%r cadence=%r", title, scope, cadence)
     _validate_title(title)
     resolved_scope = scope if scope else storage.DEFAULT_SCOPE
     _validate_scope(resolved_scope)
     if notes:
         _validate_notes(notes)
-    topic = storage.add_topic(_get_conn(), title, resolved_scope, notes if notes else None)
+    resolved_cadence = cadence if cadence else storage.DEFAULT_CADENCE
+    _validate_cadence(resolved_cadence)
+    topic = storage.add_topic(
+        _get_conn(),
+        title,
+        resolved_scope,
+        notes if notes else None,
+        resolved_cadence,
+    )
     return json.dumps(topic.to_dict())
 
 
@@ -289,6 +311,10 @@ def add_topic(title: str, scope: str = "", notes: str = "") -> str:
         "Set roundup=true when calling as part of a news roundup — the server returns at most "
         "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
         "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
+        "In roundup mode, topics still within their cadence cooldown are excluded before "
+        "rotation runs, so the result may contain fewer than 6 topics (or be empty) when "
+        "everything tracked has been checked recently; cadence has no effect on non-roundup "
+        "listings. "
         "Without roundup=true, all matching topics are returned sorted by title. "
         "By default only active (non-archived) topics are returned; pass include_archived=true "
         "to include archived topics as well. "
@@ -323,19 +349,24 @@ def remove_topic(id: str) -> str:
 
 @mcp.tool(
     description=(
-        "Updates the title, scope, and/or notes of an existing topic. "
+        "Updates the title, scope, notes, and/or cadence of an existing topic. "
         "Pass only the fields you want to change; omit or pass empty string to leave unchanged. "
-        "At least one of title, scope, or notes must be provided. "
+        "At least one of title, scope, notes, or cadence must be provided. "
+        "Valid cadence values: 'rare', 'occasional', 'regular', 'frequent', 'always' "
+        "(see add_topic for meanings). "
         "The topic ID, added_at, last_checked_at, and status are never changed by this call."
     )
 )
-def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> str:
-    logger.info("update_topic called id=%r title=%r scope=%r", id, title, scope)
+def update_topic(
+    id: str, title: str = "", scope: str = "", notes: str = "", cadence: str = ""
+) -> str:
+    logger.info("update_topic called id=%r title=%r scope=%r cadence=%r", id, title, scope, cadence)
     _validate_id(id)
-    if not title and not scope and not notes:
-        raise ValueError("at least one of title, scope, or notes must be provided")
+    if not title and not scope and not notes and not cadence:
+        raise ValueError("at least one of title, scope, notes, or cadence must be provided")
     new_title: str | None = None
     new_scope: str | None = None
+    new_cadence: str | None = None
     if title:
         _validate_title(title)
         new_title = title
@@ -344,6 +375,9 @@ def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> 
         new_scope = scope
     if notes:
         _validate_notes(notes)
+    if cadence:
+        _validate_cadence(cadence)
+        new_cadence = cadence
     topic = storage.update_topic(
         _get_conn(),
         id,
@@ -351,6 +385,7 @@ def update_topic(id: str, title: str = "", scope: str = "", notes: str = "") -> 
         new_scope,
         notes=notes if notes else None,
         update_notes=bool(notes),
+        cadence=new_cadence,
     )
     if topic is None:
         raise ValueError(f"topic not found: {id}")
