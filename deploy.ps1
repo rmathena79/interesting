@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Copies server source files to the destination, creates a virtual environment
-    if one does not exist, and installs the package. Safe to re-run — updates
+    if one does not exist, and installs the package. Safe to re-run - updates
     existing installations without touching .env or data\.
 
 .PARAMETER DestDir
@@ -51,7 +51,7 @@ if (-not (Test-Path $venvPython)) {
     Write-Host "Creating virtual environment ..."
     python -m venv "$DestDir\.venv"
 } else {
-    Write-Host "Virtual environment already exists — skipping creation."
+    Write-Host "Virtual environment already exists - skipping creation."
 }
 
 # 5. Install (or reinstall) the package
@@ -67,5 +67,5 @@ if (-not (Test-Path "$DestDir\.env")) {
     Write-Warning ".env not found in $DestDir"
     Write-Warning "Copy .env.example from the dev repo to $DestDir\.env and fill in your values."
 } else {
-    Write-Host ".env found — environment configuration present."
+    Write-Host ".env found - environment configuration present."
 }
