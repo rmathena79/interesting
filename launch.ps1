@@ -28,6 +28,6 @@ if (-not (Test-Path $python)) {
 
 # Launch a minimized console window; /k keeps it open after the server exits
 Start-Process cmd `
-    -ArgumentList "/k", "`"$python`" -m interesting.server" `
+    -ArgumentList "/k", "title Interesting MCP Server & `"$python`" -m interesting.server" `
     -WindowStyle Minimized `
     -WorkingDirectory $PSScriptRoot
