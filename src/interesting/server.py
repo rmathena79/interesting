@@ -2,6 +2,8 @@ import argparse
 import json
 import logging
 import os
+
+import colorama
 import pathlib
 import secrets
 import sqlite3
@@ -423,6 +425,8 @@ if __name__ == "__main__":
         help="Path to the SQLite database file (overrides INTERESTING_DB_PATH env var)",
     )
     args = parser.parse_args()
+
+    colorama.init()
 
     transport = cast(_Transport, args.transport or os.environ.get("MCP_TRANSPORT", "stdio"))
     _db_path = _resolve_db_path(args.db or os.environ.get("INTERESTING_DB_PATH", _DEFAULT_DB_NAME))
