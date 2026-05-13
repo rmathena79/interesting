@@ -793,6 +793,15 @@ async def test_include_archived_true_shows_both() -> None:
 # --- Resource tests ---
 
 
+def test_reference_doc_path_is_cwd_relative() -> None:
+    import pathlib
+    from interesting.server import _REFERENCE_DOC
+
+    assert _REFERENCE_DOC == pathlib.Path.cwd() / "interesting-mcp-reference.md", (
+        f"_REFERENCE_DOC must resolve from cwd, not from __file__. Got: {_REFERENCE_DOC}"
+    )
+
+
 async def test_instructions_resource_returns_text() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.read_resource(AnyUrl("interesting://instructions"))

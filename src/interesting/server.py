@@ -256,7 +256,7 @@ def list_scopes() -> str:
     )
 
 
-_REFERENCE_DOC = pathlib.Path(__file__).parents[2] / "interesting-mcp-reference.md"
+_REFERENCE_DOC = pathlib.Path.cwd() / "interesting-mcp-reference.md"
 
 
 @mcp.resource("interesting://instructions")
