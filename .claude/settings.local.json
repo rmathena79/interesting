@@ -9,7 +9,15 @@
       "Bash(.venv/Scripts/python -m ruff check src tests)",
       "Bash(.venv/Scripts/python -m pytest -v)",
       "Bash(ruff check *)",
-      "Bash(.venv/Scripts/ruff.exe check *)"
+      "Bash(.venv/Scripts/ruff.exe check *)",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/.well-known/oauth-authorization-server\" 2>&1)",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/.well-known/oauth-protected-resource\" 2>&1)",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/\" -Method GET 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\uniqu\\\\OneDrive\\\\Documents\\\\RoyStuff\\\\Servers\\\\Interesting-Topics\\\\.venv\\\\Scripts\\\\pip.exe\" index versions mcp 2>&1)",
+      "PowerShell(tailscale funnel status 2>&1)",
+      "PowerShell(Invoke-RestMethod \"https://soliboy.tail52f9f8.ts.net/.well-known/oauth-authorization-server\" 2>&1)",
+      "PowerShell(Invoke-WebRequest \"https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/main/CHANGELOG.md\" -UseBasicParsing 2>&1)",
+      "Bash(git log *)"
     ]
   }
 }

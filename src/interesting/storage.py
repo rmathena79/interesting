@@ -40,16 +40,24 @@ def _build_cadence_eligibility_clause() -> str:
 
     A topic is eligible if its cadence is 'always', if it has never been checked
     (last_checked_at IS NULL), or if its last check was at least the cadence's
-    minimum-interval days ago. SQLite's datetime('now', ...) is UTC, matching the
-    timezone-aware ISO 8601 strings written by add_topic / list_topics.
+    minimum-interval days ago.
+
+    last_checked_at is stored as a Python isoformat string (e.g.
+    '2026-06-11T16:57:46.495858+00:00'), which differs from SQLite's canonical
+    'YYYY-MM-DD HH:MM:SS' produced by datetime('now', ...). Wrapping the column
+    in datetime() normalizes both sides to the same format so the comparison is
+    correct; without it the 'T' separator causes same-day checks to appear
+    ineligible.
     """
     parts = ["cadence = 'always'", "last_checked_at IS NULL"]
     for cadence, days in _CADENCE_DAYS.items():
         if days is None:
             continue
-        parts.append(
-            f"(cadence = '{cadence}' AND last_checked_at <= datetime('now', '-{days} days'))"
+        clause = (
+            f"(cadence = '{cadence}'"
+            f" AND datetime(last_checked_at) <= datetime('now', '-{days} days'))"
         )
+        parts.append(clause)
     return "(" + " OR ".join(parts) + ")"
 
 

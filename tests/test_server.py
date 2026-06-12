@@ -1,6 +1,7 @@
 import json
 import pathlib
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -852,15 +853,17 @@ async def test_get_instructions_tool_returns_same_content() -> None:
 def _backdate_last_checked(db_path: str, topic_id: str, days_ago: int) -> None:
     """Set a topic's last_checked_at to N days before now (UTC), via a direct SQL write.
 
-    Used to simulate a topic being checked some time ago without waiting real time.
+    Writes the same Python isoformat that production code writes, so the tests
+    exercise the real timestamp format used by add_topic / list_topics.
     Opens a separate sqlite3 connection; safe alongside the lifespan's connection
     because the database is opened in WAL mode.
     """
+    stamp = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
-            "UPDATE topics SET last_checked_at = datetime('now', ?) WHERE id = ?",
-            (f"-{days_ago} days", topic_id),
+            "UPDATE topics SET last_checked_at = ? WHERE id = ?",
+            (stamp, topic_id),
         )
         conn.commit()
     finally:
@@ -1043,6 +1046,32 @@ async def test_list_topics_non_roundup_unaffected_by_cadence(isolated_db: str) -
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
     assert len(data) == 1
     assert data[0]["title"] == "Cooling off"
+
+
+async def test_roundup_frequent_topic_25h_ago_is_eligible(isolated_db: str) -> None:
+    """Regression: Python isoformat timestamps must compare correctly via datetime() normalization.
+
+    A 'frequent' topic (1-day cooldown) last checked 25 hours ago must appear in roundup.
+    The stored stamp uses the 'T' separator and '+00:00' offset; without datetime()
+    normalization it would compare greater than SQLite's space-separated datetime('now', ...)
+    and be wrongly excluded.
+    """
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Frequent 25h", "cadence": "frequent"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        stamp = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        conn = sqlite3.connect(isolated_db)
+        try:
+            conn.execute("UPDATE topics SET last_checked_at = ? WHERE id = ?", (stamp, topic_id))
+            conn.commit()
+        finally:
+            conn.close()
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id
 
 
 def test_migration_v3_to_v4_backfills_frequent(tmp_path: pathlib.Path) -> None:
