@@ -1186,6 +1186,58 @@ def test_migration_legacy_v3_columns_detected(tmp_path: pathlib.Path) -> None:
         conn.close()
 
 
+def test_migration_creates_backup_for_existing_db(tmp_path: pathlib.Path) -> None:
+    """A pre-existing v3 database gets exactly one backup file created next to it."""
+    db_path = str(tmp_path / "v3.db")
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        raw.execute("INSERT INTO schema_version (version) VALUES (3)")
+        raw.execute(
+            """
+            CREATE TABLE topics (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                scope           TEXT NOT NULL,
+                added_at        TEXT,
+                last_checked_at TEXT,
+                notes           TEXT,
+                status          TEXT NOT NULL DEFAULT 'active'
+            )
+            """
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = storage.init_db(db_path)
+    conn.close()
+
+    backups = list(tmp_path.glob("*.pre-migration-v3-*.db"))
+    assert len(backups) == 1
+
+
+def test_migration_fresh_db_creates_no_backup(tmp_path: pathlib.Path) -> None:
+    """Opening a brand-new database does not create any backup file."""
+    db_path = str(tmp_path / "fresh.db")
+    conn = storage.init_db(db_path)
+    conn.close()
+    backups = list(tmp_path.glob("*.pre-migration-*.db"))
+    assert backups == []
+
+
+def test_migration_up_to_date_db_creates_no_backup(tmp_path: pathlib.Path) -> None:
+    """Re-opening an already up-to-date database does not create a backup file."""
+    db_path = str(tmp_path / "current.db")
+    conn = storage.init_db(db_path)
+    conn.close()
+    # Open again — no migration needed, no backup expected.
+    conn = storage.init_db(db_path)
+    conn.close()
+    backups = list(tmp_path.glob("*.pre-migration-*.db"))
+    assert backups == []
+
+
 async def test_instructions_resource_mentions_cadence() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.read_resource(AnyUrl("interesting://instructions"))

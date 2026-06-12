@@ -100,6 +100,8 @@ The `cadence` column's column-level default of `'frequent'` only fires for rows 
 
 SQLite is opened in WAL mode (`PRAGMA journal_mode=WAL`) to allow concurrent reads alongside writes.
 
+When `init_db` detects that a pre-existing database file needs migration (version < current schema), it creates a point-in-time backup via `VACUUM INTO '<db_path>.pre-migration-v<N>-<YYYYMMDDTHHMMSSZ>.db'` before applying any `ALTER TABLE` statements. The backup is logged at INFO level. If the `VACUUM INTO` statement fails, `init_db` raises immediately without applying any migrations. Brand-new databases and already up-to-date databases are not backed up. No retention or pruning is performed — managing old backups is the operator's responsibility.
+
 ## Scope System
 
 Scopes are a fixed, server-defined hierarchy stored in `storage.py`:

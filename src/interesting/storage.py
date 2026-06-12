@@ -120,7 +120,9 @@ def _fetch_topic(conn: sqlite3.Connection, topic_id: str) -> Topic | None:
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
-    pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    db_file = pathlib.Path(db_path)
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+    is_existing = db_file.exists() and db_file.stat().st_size > 0
     logger.info("Opening SQLite database at %s", db_path)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -148,6 +150,17 @@ def init_db(db_path: str) -> sqlite3.Connection:
             version = 3
         elif {"added_at", "last_checked_at"}.issubset(existing_cols):
             version = 2
+
+    if version < _SCHEMA_VERSION and is_existing:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = f"{db_path}.pre-migration-v{version}-{ts}.db"
+        try:
+            conn.execute(f"VACUUM INTO '{backup_path}'")
+        except Exception as exc:
+            raise RuntimeError(
+                f"pre-migration backup failed (target: {backup_path!r}): {exc}"
+            ) from exc
+        logger.info("Created pre-migration backup at %s", backup_path)
 
     if version < 1:
         conn.execute("ALTER TABLE topics ADD COLUMN added_at TEXT")
