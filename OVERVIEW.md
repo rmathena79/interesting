@@ -14,6 +14,7 @@
 | Language | Python 3.11+ |
 | Testing | pytest + pytest-anyio |
 | Lint / Format | Ruff |
+| Type checking | mypy (strict, `src/` only) |
 
 ## File Layout
 
