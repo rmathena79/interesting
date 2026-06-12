@@ -82,6 +82,8 @@ class _SingleUserOAuthProvider:
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
+        now = time.time()
+        self._pending_codes = {k: v for k, v in self._pending_codes.items() if v.expires_at >= now}
         code = secrets.token_urlsafe(_AUTH_CODE_BYTES)
         self._pending_codes[code] = AuthorizationCode(
             code=code,
@@ -116,6 +118,8 @@ class _SingleUserOAuthProvider:
         logger.info(
             "exchange_authorization_code: issued access token for client_id=%r", client.client_id
         )
+        # expires_in is advisory: load_access_token never expires the static token,
+        # so this only tells the client when to initiate a new auth flow.
         return OAuthToken(
             access_token=_access_token_value, token_type="Bearer", expires_in=_TOKEN_TTL
         )
