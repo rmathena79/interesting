@@ -156,6 +156,11 @@ def _resolve_db_path(name: str) -> str:
         raise ValueError(
             f"absolute paths are not supported; pass a filename or relative path (got {name!r})"
         )
+    if any(segment == ".." for segment in normalized.split("/")):
+        raise ValueError(
+            "parent-directory segments are not supported; pass a filename or relative path"
+            f" (got {name!r})"
+        )
     return str(pathlib.Path(_DATA_DIR) / normalized)
 
 

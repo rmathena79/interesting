@@ -56,3 +56,23 @@ def test_absolute_windows_path_raises() -> None:
 def test_absolute_windows_backslash_raises() -> None:
     with pytest.raises(ValueError, match="absolute"):
         _resolve_db_path("C:\\data\\foo.db")
+
+
+def test_dotdot_forward_slash_raises() -> None:
+    with pytest.raises(ValueError, match="parent-directory"):
+        _resolve_db_path("../foo.db")
+
+
+def test_dotdot_nested_raises() -> None:
+    with pytest.raises(ValueError, match="parent-directory"):
+        _resolve_db_path("a/../../foo.db")
+
+
+def test_dotdot_backslash_raises() -> None:
+    with pytest.raises(ValueError, match="parent-directory"):
+        _resolve_db_path("..\\foo.db")
+
+
+def test_dotdot_infix_succeeds() -> None:
+    # Only exact ".." segments are rejected; "a..b" is a valid filename component.
+    assert p(_resolve_db_path("a..b/foo.db")) == p("data/a..b/foo.db")

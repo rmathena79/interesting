@@ -163,4 +163,4 @@ HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via three environ
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.
 
-Database paths are resolved relative to the `data/` directory; absolute paths are rejected.
+Database paths are resolved relative to the `data/` directory; absolute paths and paths containing `..` segments are rejected.
