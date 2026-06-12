@@ -41,9 +41,8 @@ _Transport = Literal["stdio", "streamable-http"]
 
 # --- Auth config (read once at import; no filesystem I/O) ---
 _client_id: str = os.environ.get("INTERESTING_CLIENT_ID", "")
-_client_secret: str = os.environ.get("INTERESTING_CLIENT_SECRET", "")
 _access_token_value: str = os.environ.get("INTERESTING_ACCESS_TOKEN", "")
-_auth_enabled: bool = bool(_client_id and _client_secret and _access_token_value)
+_auth_enabled: bool = bool(_client_id and _access_token_value)
 
 _CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 _AUTH_CODE_TTL = 300  # seconds
@@ -463,8 +462,8 @@ if __name__ == "__main__":
     logger.info("base_url=%s allowed_hosts=%s", _base_url, _allowed_hosts)
     if transport == "streamable-http" and not _auth_enabled:
         logger.warning(
-            "Running in HTTP mode without auth; set INTERESTING_CLIENT_ID, "
-            "INTERESTING_CLIENT_SECRET, and INTERESTING_ACCESS_TOKEN to enable auth"
+            "Running in HTTP mode without auth; set INTERESTING_CLIENT_ID and "
+            "INTERESTING_ACCESS_TOKEN to enable auth"
         )
     try:
         mcp.run(transport=transport)

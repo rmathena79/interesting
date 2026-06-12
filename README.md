@@ -129,18 +129,17 @@ CLI arguments take precedence over environment variables.
 
 ### Authentication (HTTP mode only)
 
-When running in `streamable-http` mode, set all three credential variables to enable OAuth 2.0
-Authorization Code + PKCE authentication. If any are absent the server starts without auth
+When running in `streamable-http` mode, set both credential variables to enable OAuth 2.0
+Authorization Code + PKCE authentication. If either is absent the server starts without auth
 (appropriate for stdio / local dev).
 
 | Variable | Description |
 |---|---|
-| `INTERESTING_CLIENT_ID` | OAuth client ID presented by the MCP client at token fetch time |
-| `INTERESTING_CLIENT_SECRET` | OAuth client secret presented by the MCP client at token fetch time |
+| `INTERESTING_CLIENT_ID` | OAuth client ID registered with the MCP client |
 | `INTERESTING_ACCESS_TOKEN` | Static bearer token issued by `/token` and validated on every MCP request |
 | `INTERESTING_BASE_URL` | Server base URL used as OAuth issuer URL (default: `http://localhost:8000`) |
 
-Generate strong random values for the secret and token, e.g.:
+Generate a strong random value for the token, e.g.:
 
 ```
 python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -150,6 +149,6 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 In the Claude custom connector settings, enter your server URL and set:
 - **OAuth Client ID**: value of `INTERESTING_CLIENT_ID`
-- **OAuth Client Secret**: value of `INTERESTING_CLIENT_SECRET`
+- **OAuth Client Secret**: leave blank (this server uses PKCE without a client secret)
 
 Claude will perform the Authorization Code + PKCE flow — redirecting to `/authorize` then exchanging the code at `/token` — before connecting.

@@ -143,7 +143,7 @@ Transport is selected via the `--transport` CLI argument or `MCP_TRANSPORT` envi
 
 ## Authentication
 
-HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via three environment variables. Auth is disabled when any of the three are absent, which is the correct default for stdio mode and local dev.
+HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via two environment variables. Auth is disabled when either is absent, which is the correct default for stdio mode and local dev.
 
 ### Token flow
 
@@ -153,14 +153,14 @@ HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via three environ
 4. Claude includes `Authorization: Bearer <token>` on every subsequent MCP request.
 5. `_SingleUserOAuthProvider.load_access_token()` validates the token using `secrets.compare_digest` (constant-time comparison).
 
-`_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_client_secret`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
+`_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
 
 ## Configuration
 
 | Source | Precedence | Variables / flags |
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
-| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_CLIENT_SECRET`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
+| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
 | Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled |
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.
