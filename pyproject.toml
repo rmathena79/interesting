@@ -29,7 +29,14 @@ anyio_mode = "auto"
 [dependency-groups]
 dev = [
     "anyio>=4.13.0",
+    "mypy>=1.14",
     "pytest>=9.0.3",
     "pytest-anyio>=0.0.0",
     "ruff>=0.15.12",
+    "types-colorama>=0.4",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]

@@ -20,6 +20,7 @@ MCP server for deterministically tracking news stories of interest.
 | Tests      | pytest                       |
 | Lint       | ruff check src tests         |
 | Format     | ruff format src tests        |
+| Type check | mypy                         |
 
 ## Project Guidance
 

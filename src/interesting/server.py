@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal, cast
 
 import colorama
-from mcp.server.auth.handlers.authorize import construct_redirect_uri
-from mcp.server.auth.provider import (
+from mcp.server.auth.handlers.authorize import construct_redirect_uri  # type: ignore[attr-defined]
+from mcp.server.auth.provider import (  # type: ignore[attr-defined]
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
@@ -63,7 +63,7 @@ class _SingleUserOAuthProvider:
     def _registered_client(self) -> OAuthClientInformationFull:
         return OAuthClientInformationFull(
             client_id=_client_id,
-            redirect_uris=[_CLAUDE_REDIRECT_URI],  # type: ignore[arg-type]
+            redirect_uris=[_CLAUDE_REDIRECT_URI],  # type: ignore[list-item]
             token_endpoint_auth_method="none",
             grant_types=["authorization_code"],
             response_types=["code"],
@@ -200,7 +200,7 @@ _auth_kwargs: dict[str, Any] = {}
 if _auth_enabled:
     _auth_kwargs = {
         "auth_server_provider": _SingleUserOAuthProvider(),
-        "auth": AuthSettings(issuer_url=_base_url, resource_server_url=_base_url),
+        "auth": AuthSettings(issuer_url=_base_url, resource_server_url=_base_url),  # type: ignore[arg-type]
     }
 
 mcp = FastMCP(
