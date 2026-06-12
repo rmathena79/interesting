@@ -128,6 +128,8 @@ The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequen
 
 In production, `_lifespan` opens one connection for the life of the server process.
 
+FastMCP dispatches synchronous tool functions on worker threads, so concurrent HTTP requests can reach the same `sqlite3.Connection` simultaneously. A module-level `_db_lock = threading.Lock()` in `server.py` serializes all storage calls: each tool acquires the lock around its `storage.*` call before touching the connection. The lock lives in `server.py`, not `storage.py`, to keep the storage layer thread-agnostic.
+
 In tests, `monkeypatch.setattr(server_module, "_db_path", db_file)` points the lifespan at a per-test `tmp_path` file. Each test wraps its tool calls in `async with create_connected_server_and_client_session(mcp)`, which runs the full lifespan, giving each session a fresh connection to an isolated database.
 
 ## Transport Modes

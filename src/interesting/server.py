@@ -5,6 +5,7 @@ import os
 import pathlib
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal, cast
@@ -167,6 +168,7 @@ def _resolve_db_path(name: str) -> str:
 # Overridden by __main__ before mcp.run(); resolved from env/default in _lifespan if still None.
 _db_path: str | None = None
 _conn: sqlite3.Connection | None = None
+_db_lock = threading.Lock()
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -311,13 +313,14 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
         _validate_notes(notes)
     resolved_cadence = cadence if cadence else storage.DEFAULT_CADENCE
     _validate_cadence(resolved_cadence)
-    topic = storage.add_topic(
-        _get_conn(),
-        title,
-        resolved_scope,
-        notes if notes else None,
-        resolved_cadence,
-    )
+    with _db_lock:
+        topic = storage.add_topic(
+            _get_conn(),
+            title,
+            resolved_scope,
+            notes if notes else None,
+            resolved_cadence,
+        )
     return json.dumps(topic.to_dict())
 
 
@@ -349,9 +352,10 @@ def list_topics(scope: str = "", roundup: bool = False, include_archived: bool =
     if scope:
         _validate_scope(scope)
     resolved = scope if scope else None
-    topics = storage.list_topics(
-        _get_conn(), scope=resolved, roundup=roundup, include_archived=include_archived
-    )
+    with _db_lock:
+        topics = storage.list_topics(
+            _get_conn(), scope=resolved, roundup=roundup, include_archived=include_archived
+        )
     return json.dumps([t.to_dict() for t in topics])
 
 
@@ -359,7 +363,8 @@ def list_topics(scope: str = "", roundup: bool = False, include_archived: bool =
 def remove_topic(id: str) -> str:
     logger.info("remove_topic called id=%r", id)
     _validate_id(id)
-    found = storage.remove_topic(_get_conn(), id)
+    with _db_lock:
+        found = storage.remove_topic(_get_conn(), id)
     if not found:
         raise ValueError(f"topic not found: {id}")
     return "OK"
@@ -396,15 +401,16 @@ def update_topic(
     if cadence:
         _validate_cadence(cadence)
         new_cadence = cadence
-    topic = storage.update_topic(
-        _get_conn(),
-        id,
-        new_title,
-        new_scope,
-        notes=notes if notes else None,
-        update_notes=bool(notes),
-        cadence=new_cadence,
-    )
+    with _db_lock:
+        topic = storage.update_topic(
+            _get_conn(),
+            id,
+            new_title,
+            new_scope,
+            notes=notes if notes else None,
+            update_notes=bool(notes),
+            cadence=new_cadence,
+        )
     if topic is None:
         raise ValueError(f"topic not found: {id}")
     return json.dumps(topic.to_dict())
@@ -421,7 +427,8 @@ def update_topic(
 def archive_topic(id: str, archived: bool = True) -> str:
     logger.info("archive_topic called id=%r archived=%r", id, archived)
     _validate_id(id)
-    topic = storage.archive_topic(_get_conn(), id, archived)
+    with _db_lock:
+        topic = storage.archive_topic(_get_conn(), id, archived)
     if topic is None:
         raise ValueError(f"topic not found: {id}")
     return json.dumps(topic.to_dict())
