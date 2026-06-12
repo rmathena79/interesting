@@ -663,6 +663,42 @@ async def test_update_topic_omitting_notes_leaves_unchanged() -> None:
     assert data[0]["notes"] == "Original notes"
 
 
+async def test_update_topic_clear_notes_removes_notes() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "My Topic", "notes": "Some notes"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        update_result = await client.call_tool(
+            "update_topic", {"id": topic_id, "clear_notes": True}
+        )
+        assert not update_result.isError
+        assert json.loads(update_result.content[0].text)["notes"] is None  # type: ignore[union-attr]
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["notes"] is None
+
+
+async def test_update_topic_clear_notes_and_notes_together_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "notes": "something", "clear_notes": True}
+        )
+    assert result.isError
+
+
+async def test_update_topic_clear_notes_alone_satisfies_at_least_one() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "My Topic", "notes": "Some notes"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool("update_topic", {"id": topic_id, "clear_notes": True})
+    assert not result.isError
+
+
 # --- archive_topic tests ---
 
 

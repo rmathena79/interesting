@@ -373,19 +373,36 @@ def remove_topic(id: str) -> str:
     description=(
         "Updates the title, scope, notes, and/or cadence of an existing topic. "
         "Pass only the fields you want to change; omit or pass empty string to leave unchanged. "
-        "At least one of title, scope, notes, or cadence must be provided. "
+        "At least one of title, scope, notes, cadence, or clear_notes must be provided. "
+        "To remove existing notes entirely, pass clear_notes=true (mutually exclusive with notes). "
         "Valid cadence values: 'rare', 'occasional', 'regular', 'frequent', 'always' "
         "(see add_topic for meanings). "
         "The topic ID, added_at, last_checked_at, and status are never changed by this call."
     )
 )
 def update_topic(
-    id: str, title: str = "", scope: str = "", notes: str = "", cadence: str = ""
+    id: str,
+    title: str = "",
+    scope: str = "",
+    notes: str = "",
+    cadence: str = "",
+    clear_notes: bool = False,
 ) -> str:
-    logger.info("update_topic called id=%r title=%r scope=%r cadence=%r", id, title, scope, cadence)
+    logger.info(
+        "update_topic called id=%r title=%r scope=%r cadence=%r clear_notes=%r",
+        id,
+        title,
+        scope,
+        cadence,
+        clear_notes,
+    )
     _validate_id(id)
-    if not title and not scope and not notes and not cadence:
-        raise ValueError("at least one of title, scope, notes, or cadence must be provided")
+    if clear_notes and notes:
+        raise ValueError("pass either notes or clear_notes, not both")
+    if not title and not scope and not notes and not cadence and not clear_notes:
+        raise ValueError(
+            "at least one of title, scope, notes, cadence, or clear_notes must be provided"
+        )
     new_title: str | None = None
     new_scope: str | None = None
     new_cadence: str | None = None
@@ -400,6 +417,7 @@ def update_topic(
     if cadence:
         _validate_cadence(cadence)
         new_cadence = cadence
+    update_notes = bool(notes) or clear_notes
     with _db_lock:
         topic = storage.update_topic(
             _get_conn(),
@@ -407,7 +425,7 @@ def update_topic(
             new_title,
             new_scope,
             notes=notes if notes else None,
-            update_notes=bool(notes),
+            update_notes=update_notes,
             cadence=new_cadence,
         )
     if topic is None:

@@ -152,10 +152,11 @@ Parameters:
 - `id` (string, required): UUID of the topic to update. Copy from `list_topics` or `add_topic` output.
 - `title` (string, optional): New title. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`.
 - `scope` (string, optional): New scope. Must be a known scope (see `list_scopes`). Omit or pass empty string to leave unchanged.
-- `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Notes cannot be cleared once set; if the story has concluded, use `archive_topic` rather than trying to erase notes.
+- `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Mutually exclusive with `clear_notes`.
 - `cadence` (string, optional): New cadence. Must be one of `rare`, `occasional`, `regular`, `frequent`, `always`. Omit or pass empty string to leave unchanged. Adjust as a story's pace changes.
+- `clear_notes` (boolean, optional, default false): Pass `true` to remove existing notes entirely. Mutually exclusive with `notes`.
 
-At least one of `title`, `scope`, `notes`, or `cadence` must be provided.
+At least one of `title`, `scope`, `notes`, `cadence`, or `clear_notes` must be provided.
 
 Returns: `{id, title, scope, added_at, last_checked_at, notes, status, cadence}` reflecting the updated state. `added_at`, `last_checked_at`, and `status` are never modified by this call.
 
@@ -205,7 +206,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | "stop tracking X", "drop X", "remove X from my list" | `archive_topic` | Prefer archive over remove to preserve history; use `remove_topic` only for topics added in error |
 | "X story is over / concluded / resolved" | `archive_topic` | Archive rather than remove |
 | "reactivate X", "X is back in the news" | `archive_topic(id, archived=false)` | Reactivate an archived topic |
-| "add context to X", "note that X focuses on Y" | `update_topic` with notes | Record search guidance in the notes field |
+| "add context to X", "note that X focuses on Y" | `update_topic` with notes | Record search guidance in the notes field; use `clear_notes=true` to remove notes |
 | "check X more / less often", "X is heating up / quieting down" | `update_topic` with cadence | Adjust cadence to match the story's tempo |
 
 ### News Roundup
