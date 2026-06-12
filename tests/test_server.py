@@ -795,6 +795,7 @@ async def test_include_archived_true_shows_both() -> None:
 
 def test_reference_doc_path_is_cwd_relative() -> None:
     import pathlib
+
     from interesting.server import _REFERENCE_DOC
 
     assert _REFERENCE_DOC == pathlib.Path.cwd() / "interesting-mcp-reference.md", (

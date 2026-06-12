@@ -2,8 +2,6 @@ import argparse
 import json
 import logging
 import os
-
-import colorama
 import pathlib
 import secrets
 import sqlite3
@@ -11,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal, cast
 
+import colorama
 from mcp.server.auth.handlers.authorize import construct_redirect_uri
 from mcp.server.auth.provider import (
     AccessToken,
@@ -64,15 +63,18 @@ class _SingleUserOAuthProvider:
     def _registered_client(self) -> OAuthClientInformationFull:
         return OAuthClientInformationFull(
             client_id=_client_id,
-            client_secret=_client_secret,
             redirect_uris=[_CLAUDE_REDIRECT_URI],  # type: ignore[arg-type]
-            token_endpoint_auth_method="client_secret_post",
+            token_endpoint_auth_method="none",
             grant_types=["authorization_code"],
             response_types=["code"],
         )
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._registered_client() if client_id == _client_id else None
+        if client_id == _client_id:
+            logger.info("get_client: recognized client_id=%r", client_id)
+            return self._registered_client()
+        logger.warning("get_client: unknown client_id=%r (expected %r)", client_id, _client_id)
+        return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         raise NotImplementedError("dynamic client registration is disabled")
@@ -96,7 +98,16 @@ class _SingleUserOAuthProvider:
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        return self._pending_codes.get(authorization_code)
+        result = self._pending_codes.get(authorization_code)
+        if result is None:
+            logger.warning(
+                "load_authorization_code: code not found for client_id=%r (have %d pending)",
+                client.client_id,
+                len(self._pending_codes),
+            )
+        else:
+            logger.info("load_authorization_code: found code for client_id=%r", client.client_id)
+        return result
 
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
@@ -437,6 +448,7 @@ if __name__ == "__main__":
         _db_path,
         "enabled" if _auth_enabled else "disabled",
     )
+    logger.info("base_url=%s allowed_hosts=%s", _base_url, _allowed_hosts)
     if transport == "streamable-http" and not _auth_enabled:
         logger.warning(
             "Running in HTTP mode without auth; set INTERESTING_CLIENT_ID, "
