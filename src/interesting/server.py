@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal, cast
 
 import colorama
+import mcp.server.auth.routes as _auth_routes
 from mcp.server.auth.handlers.authorize import construct_redirect_uri  # type: ignore[attr-defined]
 from mcp.server.auth.provider import (  # type: ignore[attr-defined]
     AccessToken,
@@ -25,6 +26,22 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from interesting import storage
+
+# The MCP library hardcodes token_endpoint_auth_methods_supported to only
+# client_secret variants, but Claude uses PKCE without a client secret.
+# Prepend "none" so the metadata advertises that PKCE-only exchanges are accepted.
+_orig_build_metadata = _auth_routes.build_metadata
+
+
+def _build_metadata_with_none(*args: Any, **kwargs: Any) -> Any:
+    md = _orig_build_metadata(*args, **kwargs)
+    existing = list(md.token_endpoint_auth_methods_supported or [])
+    if "none" not in existing:
+        md.token_endpoint_auth_methods_supported = ["none"] + existing
+    return md
+
+
+_auth_routes.build_metadata = _build_metadata_with_none
 
 logging.basicConfig(
     level=logging.INFO,
@@ -455,6 +472,29 @@ def archive_topic(id: str, archived: bool = True) -> str:
     return json.dumps(topic.to_dict())
 
 
+def _run_streamable_http_no_redirect() -> None:
+    """Run the streamable-http app with Starlette's trailing-slash redirects disabled.
+
+    Starlette defaults to redirect_slashes=True, which answers a trailing-slash variant
+    of a route (e.g. GET /.well-known/oauth-authorization-server/) with an HTTP 307.
+    claude.ai's web connector is known to reject 307 redirects anywhere in the OAuth
+    flow (see OVERVIEW.md, "Known claude.ai OAuth limitations"). Disabling the behavior
+    guarantees no 307 is ever emitted; non-canonical paths return 404 instead. This
+    replicates FastMCP.run_streamable_http_async, which offers no hook to set the flag.
+    """
+    import uvicorn
+
+    app = mcp.streamable_http_app()
+    app.router.redirect_slashes = False
+    config = uvicorn.Config(
+        app,
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    uvicorn.Server(config).run()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="interesting MCP server")
     parser.add_argument(
@@ -488,7 +528,10 @@ if __name__ == "__main__":
             "INTERESTING_ACCESS_TOKEN to enable auth"
         )
     try:
-        mcp.run(transport=transport)
+        if transport == "streamable-http":
+            _run_streamable_http_no_redirect()
+        else:
+            mcp.run(transport=transport)
     except KeyboardInterrupt:
         logger.info("Server stopped")
     except SystemExit as e:

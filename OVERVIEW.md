@@ -158,6 +158,16 @@ HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via two environme
 
 `_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
 
+### Metadata patch: advertising `token_endpoint_auth_methods_supported: "none"`
+
+The MCP library hardcodes `token_endpoint_auth_methods_supported` to `["client_secret_post", "client_secret_basic"]` in `mcp.server.auth.routes.build_metadata`. Claude registers as a public client and completes the token exchange with PKCE alone (no client secret), and the Client ID Metadata Document (CIMD) connector path *requires* the server to advertise `"none"`. At import time `server.py` wraps `build_metadata` to prepend `"none"` to that list. The registered client also uses `token_endpoint_auth_method="none"`; the token endpoint no longer validates a client secret, since PKCE plus the redirect URI locked to `https://claude.ai/api/mcp/auth_callback` already prevent an intercepted code from being exchanged by anyone else.
+
+### Known claude.ai OAuth limitations (web custom connector)
+
+The claude.ai **web** custom connector has a class of open, server-independent bugs where the OAuth flow completes `/authorize` but the connector never POSTs to `/token` (or obtains the token and then fails to attach it), surfacing as "Authorization with the MCP server failed" with an `ofid_...` reference. See anthropics/claude-ai-mcp issues #155, #250, #313. Notably #250: claude.ai rejects an `/authorize` redirect that uses HTTP **307** instead of 302/303, with a misleading "Method Not Allowed" error. This server's `/authorize` already returns **302** (FastMCP's `AuthorizationHandler`), so it is not subject to #250 — but as defensive hardening against claude.ai's brittleness toward 307s, the streamable-http app is run with Starlette's `redirect_slashes` **disabled** (see `_run_streamable_http_no_redirect`) so no trailing-slash route (e.g. `/.well-known/oauth-authorization-server/`) ever emits a 307; non-canonical paths return 404 instead.
+
+Because these limitations are claude.ai-side, the reliable way to use the server when the web connector fails is to **bypass OAuth with a static bearer header**. The server's `load_access_token` accepts any request whose token matches `INTERESTING_ACCESS_TOKEN`, regardless of how the client obtained it, so a client that can set a header works without the OAuth dance — e.g. `claude mcp add --transport http interesting <base-url>/ --header "Authorization: Bearer <INTERESTING_ACCESS_TOKEN>"`.
+
 ## Configuration
 
 | Source | Precedence | Variables / flags |
