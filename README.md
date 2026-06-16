@@ -11,7 +11,7 @@ For technical description of the project, see `OVERVIEW.md`.
 
 When Claude connects to this server, it should read the `interesting://instructions`
 resource, or call `get_instructions_tool`, at the start of each session. The resource returns plain-text usage instructions
-covering all tools, scope semantics, title conventions, and the news roundup workflow —
+covering all tools, scope semantics, title conventions, and the news roundup workflow --
 ingests [interesting-mcp-reference.md](interesting-mcp-reference.md).
 
 Add a project instruction such as:
@@ -86,7 +86,7 @@ Then create a `.env` in the production directory:
 
 ```powershell
 Copy-Item .env.example C:\path\to\interesting-prod\.env
-# Edit .env — at minimum, set MCP_TRANSPORT and the OAuth credentials for HTTP mode
+# Edit .env -- at minimum, set MCP_TRANSPORT and the OAuth credentials for HTTP mode
 ```
 
 ### Launching
@@ -151,4 +151,4 @@ In the Claude custom connector settings, enter your server URL and set:
 - **OAuth Client ID**: value of `INTERESTING_CLIENT_ID`
 - **OAuth Client Secret**: leave blank (this server uses PKCE without a client secret)
 
-Claude will perform the Authorization Code + PKCE flow — redirecting to `/authorize` then exchanging the code at `/token` — before connecting.
+Claude will perform the Authorization Code + PKCE flow -- redirecting to `/authorize` then exchanging the code at `/token` -- before connecting.

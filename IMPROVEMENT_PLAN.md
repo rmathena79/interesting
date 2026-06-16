@@ -18,14 +18,14 @@ mypy
 
 ## Completed (reliability/maintainability review, 2026-06-12)
 
-- Task 1 — Fix cadence eligibility timestamp comparison (DONE — commit a4ec6e0)
-- Task 2 — Reject `..` traversal in `_resolve_db_path` (DONE — commit 918723f)
-- Task 3 — Serialize database access with a lock (DONE — commit b7f1679)
-- Task 4 — Drop the unused `INTERESTING_CLIENT_SECRET` (DONE — commit 1c07edd)
-- Task 5 — Add `clear_notes` flag to `update_topic` (DONE — commit 379248e)
-- Task 6 — Back up the database before applying migrations (DONE — commit a45151c)
-- Task 7 — Add a type checker (mypy) (DONE — commit d962c6f)
-- Task 8 — Minor cleanups (DONE — commit 5cb3f08)
+- Task 1 - Fix cadence eligibility timestamp comparison (DONE - commit a4ec6e0)
+- Task 2 - Reject `..` traversal in `_resolve_db_path` (DONE - commit 918723f)
+- Task 3 - Serialize database access with a lock (DONE - commit b7f1679)
+- Task 4 - Drop the unused `INTERESTING_CLIENT_SECRET` (DONE - commit 1c07edd)
+- Task 5 - Add `clear_notes` flag to `update_topic` (DONE - commit 379248e)
+- Task 6 - Back up the database before applying migrations (DONE - commit a45151c)
+- Task 7 - Add a type checker (mypy) (DONE - commit d962c6f)
+- Task 8 - Minor cleanups (DONE - commit 5cb3f08)
 
 ---
 
@@ -36,26 +36,26 @@ configuration. **Guiding rule: tune behavior, never tune stored-data semantics.*
 stored row's value or a past migration depends on stays hardcoded. Specifically, leave alone:
 `_CADENCE_DAYS` *keys* / `KNOWN_CADENCES`, `_MIGRATION_CADENCE`, `_STATUS_ACTIVE/_ARCHIVED`,
 `_SCHEMA_VERSION`, `DEFAULT_SCOPE`, `_CONTAINED_SCOPES`, and `_DATA_DIR` (the path-confinement
-root — making it configurable reopens the traversal surface closed in the previous review).
+root - making it configurable reopens the traversal surface closed in the previous review).
 
 Architectural constraints (carry through every task below):
 
 - **`storage.py` stays pure.** It must not read environment variables. Tunables enter storage
   functions as **parameters with module-level defaults** (the existing constants), so storage
-  remains standalone-testable and the `server → storage` dependency direction is preserved.
+  remains standalone-testable and the `server -> storage` dependency direction is preserved.
 - **Env reads live in one place.** Add `src/interesting/config.py` that reads and validates
-  env vars **once at import**, exposing typed, frozen values — matching the existing
+  env vars **once at import**, exposing typed, frozen values - matching the existing
   import-time env pattern (auth, allowed hosts, base URL). `server.py` imports `config` and
   passes the configured values into storage calls.
 - **Fail fast on bad input** at import/startup with a clear `ValueError`, mirroring
-  `_resolve_db_path` — never silently coerce.
+  `_resolve_db_path` - never silently coerce.
 
 ---
 
-## Task 9 — Introduce `config.py` and make the roundup limit configurable
+## Task 9 - Introduce `config.py` and make the roundup limit configurable
 
-**Problem.** `_ROUNDUP_LIMIT = 6` (`storage.py:11`) is the roundup batch size — pure query
-behavior with no data coupling — but is not tunable per deployment. There is also no single
+**Problem.** `_ROUNDUP_LIMIT = 6` (`storage.py:11`) is the roundup batch size - pure query
+behavior with no data coupling - but is not tunable per deployment. There is also no single
 home for parsed/validated runtime config.
 
 **Fix.**
@@ -75,18 +75,18 @@ home for parsed/validated runtime config.
 - Behavioral test via the existing `monkeypatch.setattr` pattern used for `_db_path`: set the
   limit to `2`, seed 5+ active topics, assert `list_topics(roundup=True)` returns at most 2.
 - Storage-layer test: call `storage.list_topics(conn, roundup=True, roundup_limit=2)`
-  directly (no env) and assert the cap — exercises the defaulting/param path.
+  directly (no env) and assert the cap - exercises the defaulting/param path.
 - Default-preservation regression: with no env set, `_ROUNDUP_LIMIT == 6`.
 
 **Docs.** README.md Environment Variables table; `.env.example` (commented entry);
 `OVERVIEW.md` "Roundup Rotation" + "Configuration" (note the limit is env-tunable and
 describe the new `config.py` layer and the "tune behavior, not stored-data semantics"
-boundary). `interesting-mcp-reference.md` — replace any specific mention of the batch size
+boundary). `interesting-mcp-reference.md` - replace any specific mention of the batch size
 with "up to N topics (default: 6)".
 
 ---
 
-## Task 10 — Make cadence interval days configurable
+## Task 10 - Make cadence interval days configurable
 
 **Problem.** The day values in `_CADENCE_DAYS` (`storage.py:26`) are eligibility tuning only,
 but are hardcoded. `_CADENCE_ELIGIBILITY_CLAUSE` is additionally **precomputed at module load**
@@ -98,7 +98,7 @@ but are hardcoded. `_CADENCE_ELIGIBILITY_CLAUSE` is additionally **precomputed a
   - each key must be in `KNOWN_CADENCES` **and not** `always` (whose interval is `None` =
     no minimum; it is not a day count and cannot be overridden);
   - `days` must parse to `int >= 1`;
-  - unknown key, the `always` key, malformed pair, or bad `days` → `ValueError`;
+  - unknown key, the `always` key, malformed pair, or bad `days` -> `ValueError`;
   - unspecified keys fall back to the defaults, so a deployment can override just one.
   The validated result is a full `dict[str, int | None]` merged over the defaults.
 - Add a `cadence_days: dict[str, int | None] = _CADENCE_DAYS` parameter to
@@ -108,7 +108,7 @@ but are hardcoded. `_CADENCE_ELIGIBILITY_CLAUSE` is additionally **precomputed a
   module-level state. Keep `_build_cadence_eligibility_clause` as a helper that takes the map.
   - **Note:** `days` is f-string-interpolated into SQL (not a bound parameter), so the
     `int >= 1` validation in `config.py` is the only thing standing between input and the
-    query — keep it strict.
+    query - keep it strict.
 - In the `list_topics` tool, pass `cadence_days=config.CADENCE_DAYS`.
 
 **Tests.**
@@ -121,29 +121,29 @@ but are hardcoded. `_CADENCE_ELIGIBILITY_CLAUSE` is additionally **precomputed a
 
 **Docs.** README.md + `.env.example` (format/fallback notes); `OVERVIEW.md` "Roundup
 Rotation" (clause now built per-call from configurable days) + "Configuration".
-`interesting-mcp-reference.md` — replace specific day counts with "N days (default: X)"
+`interesting-mcp-reference.md` - replace specific day counts with "N days (default: X)"
 wherever cadence intervals appear; the reference doc is consumed by the AI client as the
 `interesting://instructions` resource, so it must stay correct across deployments.
 
 ---
 
-## Deferred — flag the tradeoff before implementing
+## Deferred - flag the tradeoff before implementing
 
 - **Tier 2/3 tunables** (`INTERESTING_TITLE_MAX`, `INTERESTING_NOTES_MAX`,
   `INTERESTING_HTTP_PORT`, auth TTLs `_AUTH_CODE_TTL` / `_TOKEN_TTL` / `_AUTH_CODE_BYTES`).
   Same `config.py` pattern. `128` and `512` appear as literal numbers in
   `interesting-mcp-reference.md` (the `interesting://instructions` resource consumed by the AI
   client) and tool descriptions; if made configurable, replace them with "up to N characters
-  (default: 128/512)" — same approach as Task 10's cadence intervals. The HTTP port is
+  (default: 128/512)" - same approach as Task 10's cadence intervals. The HTTP port is
   currently not even a named constant (FastMCP default + `_DEFAULT_BASE_URL`); promote to a
   named constant first if it becomes configurable.
 - **`DEFAULT_CADENCE` / `DEFAULT_SCOPE` as env vars.** Safe-ish but low demand; defer unless
   a concrete need appears. `DEFAULT_SCOPE` in particular is woven into the scope-hierarchy
-  logic — treat as stored-data-adjacent and keep hardcoded.
+  logic - treat as stored-data-adjacent and keep hardcoded.
 
 ---
 
-## Deferred — needs analysis and discussion first; do NOT implement
+## Deferred - needs analysis and discussion first; do NOT implement
 
 These were reviewed but the owner wants a design discussion before choosing a solution.
 

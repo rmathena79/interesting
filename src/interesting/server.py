@@ -70,7 +70,7 @@ _TOKEN_TTL = 24 * 60 * 60  # seconds
 class _SingleUserOAuthProvider:
     """OAuth 2.0 Authorization Code + PKCE server for a single pre-registered client.
 
-    Auto-approves every authorization request — security relies on network-level access
+    Auto-approves every authorization request -- security relies on network-level access
     control (e.g. Tailscale). In-memory code store is intentionally ephemeral.
     """
 
@@ -252,7 +252,7 @@ def _validate_field(value: str, field_name: str, max_len: int, *, required: bool
 
 def _validate_id(id_value: str) -> None:
     """Validate a topic ID. Server-generated IDs are UUIDs, but the check is permissive
-    enough that any reasonable opaque string passes — only obviously malformed input is
+    enough that any reasonable opaque string passes -- only obviously malformed input is
     rejected before reaching the DB."""
     _validate_field(id_value, "id", _ID_MAX)
 
@@ -349,7 +349,7 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
         "Returns tracked topics. "
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
-        "Set roundup=true when calling as part of a news roundup — the server returns at most "
+        "Set roundup=true when calling as part of a news roundup -- the server returns at most "
         "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
         "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
         "In roundup mode, topics still within their cadence cooldown are excluded before "

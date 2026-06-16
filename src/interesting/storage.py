@@ -12,7 +12,7 @@ _ROUNDUP_LIMIT = 6
 _SCHEMA_VERSION = 4
 
 # Maps a requested scope to the set of stored scopes it includes.
-# DEFAULT_SCOPE ("world") is not listed — it means no filter (return all topics).
+# DEFAULT_SCOPE ("world") is not listed -- it means no filter (return all topics).
 _CONTAINED_SCOPES: dict[str, set[str]] = {
     "us": {"us", "pdx"},
     "pdx": {"pdx"},

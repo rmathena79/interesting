@@ -21,8 +21,8 @@
 ```
 src/interesting/
     __init__.py       empty package marker
-    storage.py        database layer — pure functions over a sqlite3.Connection
-    server.py         MCP server — tool definitions, validation, connection lifecycle
+    storage.py        database layer -- pure functions over a sqlite3.Connection
+    server.py         MCP server -- tool definitions, validation, connection lifecycle
 
 tests/
     test_server.py    integration tests via MCP client/server session
@@ -54,9 +54,9 @@ All database access is through plain functions that take a `sqlite3.Connection` 
 
 Defines a `FastMCP` instance with seven tools and one resource. It owns the `sqlite3.Connection` lifecycle:
 
-- `_conn: sqlite3.Connection | None` — module-level connection, `None` until the server starts.
-- `_lifespan` — async context manager registered with FastMCP. On startup it resolves the database path, calls `storage.init_db`, and stores the returned connection. On shutdown it closes the connection.
-- `_get_conn()` — guard that raises `RuntimeError` if called before the lifespan has run.
+- `_conn: sqlite3.Connection | None` -- module-level connection, `None` until the server starts.
+- `_lifespan` -- async context manager registered with FastMCP. On startup it resolves the database path, calls `storage.init_db`, and stores the returned connection. On shutdown it closes the connection.
+- `_get_conn()` -- guard that raises `RuntimeError` if called before the lifespan has run.
 
 Tool functions are synchronous; FastMCP handles the async boundary. Each tool validates its inputs, calls the appropriate storage function via `_get_conn()`, and returns a JSON string.
 
@@ -67,11 +67,11 @@ Tool functions are synchronous; FastMCP handles the async boundary. Each tool va
 ```python
 class Topic(NamedTuple):
     id: str               # UUID4, server-generated
-    title: str            # printable ASCII, 1–128 chars
+    title: str            # printable ASCII, 1-128 chars
     scope: str            # one of KNOWN_SCOPES
     added_at: str | None  # ISO 8601 UTC; null for pre-migration rows
     last_checked_at: str | None  # ISO 8601 UTC; null until first roundup inclusion
-    notes: str | None     # optional search guidance, printable ASCII ≤512 chars; null if unset
+    notes: str | None     # optional search guidance, printable ASCII <=512 chars; null if unset
     status: str           # "active" (default) or "archived"
     cadence: str          # one of KNOWN_CADENCES; "regular" default for new topics
 ```
@@ -101,7 +101,7 @@ The `cadence` column's column-level default of `'frequent'` only fires for rows 
 
 SQLite is opened in WAL mode (`PRAGMA journal_mode=WAL`) to allow concurrent reads alongside writes.
 
-When `init_db` detects that a pre-existing database file needs migration (version < current schema), it creates a point-in-time backup via `VACUUM INTO '<db_path>.pre-migration-v<N>-<YYYYMMDDTHHMMSSZ>.db'` before applying any `ALTER TABLE` statements. The backup is logged at INFO level. If the `VACUUM INTO` statement fails, `init_db` raises immediately without applying any migrations. Brand-new databases and already up-to-date databases are not backed up. No retention or pruning is performed — managing old backups is the operator's responsibility.
+When `init_db` detects that a pre-existing database file needs migration (version < current schema), it creates a point-in-time backup via `VACUUM INTO '<db_path>.pre-migration-v<N>-<YYYYMMDDTHHMMSSZ>.db'` before applying any `ALTER TABLE` statements. The backup is logged at INFO level. If the `VACUUM INTO` statement fails, `init_db` raises immediately without applying any migrations. Brand-new databases and already up-to-date databases are not backed up. No retention or pruning is performed -- managing old backups is the operator's responsibility.
 
 ## Scope System
 
@@ -115,7 +115,7 @@ _CONTAINED_SCOPES = {
 KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 ```
 
-`DEFAULT_SCOPE = "world"` means "no filter" — a `list_topics` call scoped to `world` returns all topics regardless of their stored scope. Narrower scopes filter to only the topics contained within them. The hierarchy is intentionally hardcoded; adding a scope requires modifying `_CONTAINED_SCOPES` and bumping `_SCHEMA_VERSION` if a migration is needed.
+`DEFAULT_SCOPE = "world"` means "no filter" -- a `list_topics` call scoped to `world` returns all topics regardless of their stored scope. Narrower scopes filter to only the topics contained within them. The hierarchy is intentionally hardcoded; adding a scope requires modifying `_CONTAINED_SCOPES` and bumping `_SCHEMA_VERSION` if a migration is needed.
 
 ## Roundup Rotation
 
@@ -156,7 +156,7 @@ HTTP mode supports OAuth 2.0 Authorization Code + PKCE, opt-in via two environme
 4. Claude includes `Authorization: Bearer <token>` on every subsequent MCP request.
 5. `_SingleUserOAuthProvider.load_access_token()` validates the token using `secrets.compare_digest` (constant-time comparison).
 
-`_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_access_token_value`) are read from environment variables at import time — no filesystem I/O, safe to import in tests.
+`_SingleUserOAuthProvider` is registered with FastMCP via the `auth_server_provider` constructor parameter. Auth credentials (`_client_id`, `_access_token_value`) are read from environment variables at import time -- no filesystem I/O, safe to import in tests.
 
 ### Metadata patch: advertising `token_endpoint_auth_methods_supported: "none"`
 
@@ -164,9 +164,9 @@ The MCP library hardcodes `token_endpoint_auth_methods_supported` to `["client_s
 
 ### Known claude.ai OAuth limitations (web custom connector)
 
-The claude.ai **web** custom connector has a class of open, server-independent bugs where the OAuth flow completes `/authorize` but the connector never POSTs to `/token` (or obtains the token and then fails to attach it), surfacing as "Authorization with the MCP server failed" with an `ofid_...` reference. See anthropics/claude-ai-mcp issues #155, #250, #313. Notably #250: claude.ai rejects an `/authorize` redirect that uses HTTP **307** instead of 302/303, with a misleading "Method Not Allowed" error. This server's `/authorize` already returns **302** (FastMCP's `AuthorizationHandler`), so it is not subject to #250 — but as defensive hardening against claude.ai's brittleness toward 307s, the streamable-http app is run with Starlette's `redirect_slashes` **disabled** (see `_run_streamable_http_no_redirect`) so no trailing-slash route (e.g. `/.well-known/oauth-authorization-server/`) ever emits a 307; non-canonical paths return 404 instead.
+The claude.ai **web** custom connector has a class of open, server-independent bugs where the OAuth flow completes `/authorize` but the connector never POSTs to `/token` (or obtains the token and then fails to attach it), surfacing as "Authorization with the MCP server failed" with an `ofid_...` reference. See anthropics/claude-ai-mcp issues #155, #250, #313. Notably #250: claude.ai rejects an `/authorize` redirect that uses HTTP **307** instead of 302/303, with a misleading "Method Not Allowed" error. This server's `/authorize` already returns **302** (FastMCP's `AuthorizationHandler`), so it is not subject to #250 -- but as defensive hardening against claude.ai's brittleness toward 307s, the streamable-http app is run with Starlette's `redirect_slashes` **disabled** (see `_run_streamable_http_no_redirect`) so no trailing-slash route (e.g. `/.well-known/oauth-authorization-server/`) ever emits a 307; non-canonical paths return 404 instead.
 
-Because these limitations are claude.ai-side, the reliable way to use the server when the web connector fails is to **bypass OAuth with a static bearer header**. The server's `load_access_token` accepts any request whose token matches `INTERESTING_ACCESS_TOKEN`, regardless of how the client obtained it, so a client that can set a header works without the OAuth dance — e.g. `claude mcp add --transport http interesting <base-url>/ --header "Authorization: Bearer <INTERESTING_ACCESS_TOKEN>"`.
+Because these limitations are claude.ai-side, the reliable way to use the server when the web connector fails is to **bypass OAuth with a static bearer header**. The server's `load_access_token` accepts any request whose token matches `INTERESTING_ACCESS_TOKEN`, regardless of how the client obtained it, so a client that can set a header works without the OAuth dance -- e.g. `claude mcp add --transport http interesting <base-url>/ --header "Authorization: Bearer <INTERESTING_ACCESS_TOKEN>"`.
 
 ## Configuration
 

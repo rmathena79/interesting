@@ -65,13 +65,13 @@ async def test_add_topic_title_max_length_succeeds() -> None:
 
 async def test_add_topic_non_ascii_title_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "Café News"})
+        result = await client.call_tool("add_topic", {"title": "Caf\xe9 News"})
     assert result.isError
 
 
 async def test_add_topic_non_ascii_scope_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "News", "scope": "éu"})
+        result = await client.call_tool("add_topic", {"title": "News", "scope": "\xe9u"})
     assert result.isError
 
 
@@ -202,7 +202,7 @@ async def test_remove_topic_null_byte_id_fails() -> None:
 
 async def test_remove_topic_non_ascii_id_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("remove_topic", {"id": "café-id"})
+        result = await client.call_tool("remove_topic", {"id": "caf\xe9-id"})
     assert result.isError
 
 
@@ -226,7 +226,7 @@ async def test_update_topic_control_char_id_fails() -> None:
 
 async def test_update_topic_non_ascii_id_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("update_topic", {"id": "café-id", "title": "X"})
+        result = await client.call_tool("update_topic", {"id": "caf\xe9-id", "title": "X"})
     assert result.isError
 
 
@@ -250,7 +250,7 @@ async def test_archive_topic_control_char_id_fails() -> None:
 
 async def test_archive_topic_non_ascii_id_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("archive_topic", {"id": "café-id"})
+        result = await client.call_tool("archive_topic", {"id": "caf\xe9-id"})
     assert result.isError
 
 
@@ -500,7 +500,7 @@ async def test_update_topic_invalid_title_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         add_result = await client.call_tool("add_topic", {"title": "My Topic"})
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
-        result = await client.call_tool("update_topic", {"id": topic_id, "title": "Café"})
+        result = await client.call_tool("update_topic", {"id": topic_id, "title": "Caf\xe9"})
     assert result.isError
 
 
@@ -603,7 +603,7 @@ async def test_add_topic_notes_max_length_succeeds() -> None:
 
 async def test_add_topic_notes_non_ascii_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "focus on — dash"})
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "focus on — dash"})  # non-ASCII em dash is the test payload
     assert result.isError
 
 
@@ -647,7 +647,7 @@ async def test_update_topic_notes_non_ascii_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         add_result = await client.call_tool("add_topic", {"title": "My Topic"})
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
-        result = await client.call_tool("update_topic", {"id": topic_id, "notes": "café"})
+        result = await client.call_tool("update_topic", {"id": topic_id, "notes": "caf\xe9"})
     assert result.isError
 
 
@@ -990,7 +990,7 @@ async def test_roundup_excludes_topic_within_cooldown(isolated_db: str) -> None:
             "add_topic", {"title": "Slow burner", "cadence": "rare"}
         )
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
-        # Backdate to 5 days ago — well inside the 14-day cooldown for 'rare'.
+        # Backdate to 5 days ago -- well inside the 14-day cooldown for 'rare'.
         _backdate_last_checked(isolated_db, topic_id, days_ago=5)
         result = await client.call_tool("list_topics", {"roundup": True})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -1003,7 +1003,7 @@ async def test_roundup_includes_topic_after_cooldown(isolated_db: str) -> None:
             "add_topic", {"title": "Slow burner", "cadence": "rare"}
         )
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
-        # Backdate to 15 days ago — past the 14-day cooldown for 'rare'.
+        # Backdate to 15 days ago -- past the 14-day cooldown for 'rare'.
         _backdate_last_checked(isolated_db, topic_id, days_ago=15)
         result = await client.call_tool("list_topics", {"roundup": True})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -1017,7 +1017,7 @@ async def test_roundup_always_cadence_ignores_cooldown(isolated_db: str) -> None
             "add_topic", {"title": "High priority", "cadence": "always"}
         )
         topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
-        # Backdate by less than a day — for 'always', cooldown is irrelevant.
+        # Backdate by less than a day -- for 'always', cooldown is irrelevant.
         _backdate_last_checked(isolated_db, topic_id, days_ago=0)
         result = await client.call_tool("list_topics", {"roundup": True})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -1027,7 +1027,7 @@ async def test_roundup_always_cadence_ignores_cooldown(isolated_db: str) -> None
 
 async def test_roundup_null_last_checked_eligible_regardless_of_cadence() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        # Brand-new 'rare' topic — never checked, so should still be eligible.
+        # Brand-new 'rare' topic -- never checked, so should still be eligible.
         await client.call_tool("add_topic", {"title": "Fresh rare", "cadence": "rare"})
         result = await client.call_tool("list_topics", {"roundup": True})
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
@@ -1154,7 +1154,7 @@ def test_migration_legacy_v3_columns_detected(tmp_path: pathlib.Path) -> None:
     db_path = str(tmp_path / "legacy.db")
     raw = sqlite3.connect(db_path)
     try:
-        # No schema_version table yet — exact pre-versioning state.
+        # No schema_version table yet -- exact pre-versioning state.
         raw.execute(
             """
             CREATE TABLE topics (
@@ -1231,7 +1231,7 @@ def test_migration_up_to_date_db_creates_no_backup(tmp_path: pathlib.Path) -> No
     db_path = str(tmp_path / "current.db")
     conn = storage.init_db(db_path)
     conn.close()
-    # Open again — no migration needed, no backup expected.
+    # Open again -- no migration needed, no backup expected.
     conn = storage.init_db(db_path)
     conn.close()
     backups = list(tmp_path.glob("*.pre-migration-*.db"))
