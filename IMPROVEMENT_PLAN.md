@@ -1,9 +1,9 @@
 # Improvement Plan
 
-Prioritized, actionable work items from a reliability/maintainability review (2026-06-12).
-Execute in order; each task is independently committable. After any code change, follow the
-project rules in `CLAUDE.md`: keep `interesting-mcp-reference.md` in sync with tool changes,
-update `OVERVIEW.md` where behavior it documents changes, and run the verification commands.
+Prioritized, actionable work items. Execute in order; each task is independently
+committable. After any code change, follow the project rules in `CLAUDE.md`: keep
+`interesting-mcp-reference.md` in sync with tool changes, update `OVERVIEW.md` where
+behavior it documents changes, and run the verification commands.
 
 **Verification for every task** (from repo root, using the project venv):
 
@@ -11,213 +11,146 @@ update `OVERVIEW.md` where behavior it documents changes, and run the verificati
 pytest
 ruff check src tests
 ruff format src tests
+mypy
 ```
-
-Note: the working tree already contains uncommitted changes to `src/interesting/server.py`
-(OAuth logging, `token_endpoint_auth_method="none"`) and `tests/test_server.py`. Task 4
-builds on those changes; do not revert them.
 
 ---
 
-## Task 1 — Fix cadence eligibility timestamp comparison (BUG, highest priority)
+## Completed (reliability/maintainability review, 2026-06-12)
 
-**Problem.** `_build_cadence_eligibility_clause()` in `src/interesting/storage.py` (~line 51)
-compares `last_checked_at <= datetime('now', '-N days')` as strings. The application writes
-`last_checked_at` via `datetime.now(timezone.utc).isoformat()`, producing
-`2026-06-11T16:57:46.495858+00:00`, but SQLite's `datetime()` produces
-`2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, any same-date
-comparison evaluates to "not eligible", so every cadence cooldown runs up to ~24 hours long.
-Confirmed by repro: a `frequent` (1-day) topic checked 29 hours ago is reported ineligible.
+- Task 1 — Fix cadence eligibility timestamp comparison (DONE — commit a4ec6e0)
+- Task 2 — Reject `..` traversal in `_resolve_db_path` (DONE — commit 918723f)
+- Task 3 — Serialize database access with a lock (DONE — commit b7f1679)
+- Task 4 — Drop the unused `INTERESTING_CLIENT_SECRET` (DONE — commit 1c07edd)
+- Task 5 — Add `clear_notes` flag to `update_topic` (DONE — commit 379248e)
+- Task 6 — Back up the database before applying migrations (DONE — commit a45151c)
+- Task 7 — Add a type checker (mypy) (DONE — commit d962c6f)
+- Task 8 — Minor cleanups (DONE — commit 5cb3f08)
 
-**Fix.** In the generated SQL clause, normalize the stored value before comparing:
+---
 
-```sql
-(cadence = '<cadence>' AND datetime(last_checked_at) <= datetime('now', '-<days> days'))
-```
+## Configurable constants (review 2026-06-16)
 
-SQLite's `datetime()` parses the `T` separator and the `+00:00` offset correctly, and both
-sides then share SQLite's canonical `YYYY-MM-DD HH:MM:SS` format, making lexicographic
-comparison equivalent to chronological comparison. Keep the `last_checked_at IS NULL` and
-`cadence = 'always'` branches as they are.
+Pull a small set of behavior-tuning constants out of the code and into env-driven
+configuration. **Guiding rule: tune behavior, never tune stored-data semantics.** Anything a
+stored row's value or a past migration depends on stays hardcoded. Specifically, leave alone:
+`_CADENCE_DAYS` *keys* / `KNOWN_CADENCES`, `_MIGRATION_CADENCE`, `_STATUS_ACTIVE/_ARCHIVED`,
+`_SCHEMA_VERSION`, `DEFAULT_SCOPE`, `_CONTAINED_SCOPES`, and `_DATA_DIR` (the path-confinement
+root — making it configurable reopens the traversal surface closed in the previous review).
+
+Architectural constraints (carry through every task below):
+
+- **`storage.py` stays pure.** It must not read environment variables. Tunables enter storage
+  functions as **parameters with module-level defaults** (the existing constants), so storage
+  remains standalone-testable and the `server → storage` dependency direction is preserved.
+- **Env reads live in one place.** Add `src/interesting/config.py` that reads and validates
+  env vars **once at import**, exposing typed, frozen values — matching the existing
+  import-time env pattern (auth, allowed hosts, base URL). `server.py` imports `config` and
+  passes the configured values into storage calls.
+- **Fail fast on bad input** at import/startup with a clear `ValueError`, mirroring
+  `_resolve_db_path` — never silently coerce.
+
+---
+
+## Task 9 — Introduce `config.py` and make the roundup limit configurable
+
+**Problem.** `_ROUNDUP_LIMIT = 6` (`storage.py:11`) is the roundup batch size — pure query
+behavior with no data coupling — but is not tunable per deployment. There is also no single
+home for parsed/validated runtime config.
+
+**Fix.**
+- Add `src/interesting/config.py`. It owns all env reads for tunables and exposes typed,
+  validated module-level values. No filesystem I/O at import (safe to import in tests).
+- Add `INTERESTING_ROUNDUP_LIMIT`: parse to `int`, require `>= 1`, default `6`. Reject
+  non-integer or `<= 0` with a `ValueError` naming the variable and the bad value.
+- Add a `roundup_limit: int = _ROUNDUP_LIMIT` parameter to `storage.list_topics`
+  (`storage.py:229`); use it for the `LIMIT` instead of the bare constant. The module-level
+  default preserves standalone behavior.
+- In the `list_topics` tool (`server.py:376`), pass `roundup_limit=config.ROUNDUP_LIMIT`
+  into the storage call (inside the existing `_db_lock` block).
 
 **Tests.**
-1. Fix the root cause of the test blind spot: `_backdate_last_checked` in
-   `tests/test_server.py` (~line 852) currently writes stamps with SQLite's
-   `datetime('now', ?)`, i.e. the format production never writes. Change it to compute the
-   backdated timestamp in Python and write `datetime.now(timezone.utc) - timedelta(days=...)`
-   `.isoformat()`, so the suite exercises the production format. The existing cadence tests
-   then become regression coverage for this bug.
-2. Add one explicit regression test for the same-date boundary: a `frequent` topic whose
-   Python-isoformat `last_checked_at` is 25 hours ago (same effort: > 1 day but cutoff and
-   stamp can share a calendar date) must appear in `list_topics(roundup=True)`.
+- New `tests/test_config.py` (pure parsing, no DB): default is `6`; a valid override parses;
+  non-int, `0`, and negative each raise `ValueError`.
+- Behavioral test via the existing `monkeypatch.setattr` pattern used for `_db_path`: set the
+  limit to `2`, seed 5+ active topics, assert `list_topics(roundup=True)` returns at most 2.
+- Storage-layer test: call `storage.list_topics(conn, roundup=True, roundup_limit=2)`
+  directly (no env) and assert the cap — exercises the defaulting/param path.
+- Default-preservation regression: with no env set, `_ROUNDUP_LIMIT == 6`.
 
-**Docs.** `OVERVIEW.md` (Roundup Rotation section, ~line 121) currently asserts the
-lexicographic comparison is correct. Rewrite that sentence to describe the `datetime()`
-normalization and why it is needed.
-
----
-
-## Task 2 — Reject `..` traversal in `_resolve_db_path`
-
-**Problem.** `_resolve_db_path` in `src/interesting/server.py` (~line 145) rejects absolute
-paths but accepts `..` segments, so `--db ../../foo.db` escapes the `data/` directory the
-function exists to confine paths to.
-
-**Fix.** After normalizing separators, split the path and raise `ValueError` if any segment
-is `..` (message should parallel the existing absolute-path error, e.g.
-`"parent-directory segments are not supported; pass a filename or relative path (got {name!r})"`).
-Rejecting bare `..` segments is sufficient; do not try to resolve/canonicalize.
-
-**Tests.** Add cases to `tests/test_db_path.py`:
-- `_resolve_db_path("../foo.db")` raises `ValueError`
-- `_resolve_db_path("a/../../foo.db")` raises `ValueError`
-- `_resolve_db_path("..\\foo.db")` raises `ValueError` (backslash form)
-- `_resolve_db_path("a..b/foo.db")` succeeds (only exact `..` segments are rejected)
-
-**Docs.** Add one line to `OVERVIEW.md` Configuration section (it already documents that
-absolute paths are rejected).
+**Docs.** README.md Environment Variables table; `.env.example` (commented entry);
+`OVERVIEW.md` "Roundup Rotation" + "Configuration" (note the limit is env-tunable and
+describe the new `config.py` layer and the "tune behavior, not stored-data semantics"
+boundary). `interesting-mcp-reference.md` — replace any specific mention of the batch size
+with "up to N topics (default: 6)".
 
 ---
 
-## Task 3 — Serialize database access with a lock
+## Task 10 — Make cadence interval days configurable
 
-**Problem.** `server.py` shares one `sqlite3.Connection` (opened with
-`check_same_thread=False`) across all tool calls. FastMCP runs the synchronous tool functions
-on worker threads, so concurrent requests (HTTP mode) can interleave. The roundup path in
-`storage.list_topics` (SELECT, then UPDATE, then commit, ~lines 238-258) is not atomic: two
-concurrent roundup calls can return the same topics or stamp rows they did not return.
-
-**Fix.** Add a module-level `threading.Lock` in `server.py` and acquire it around every
-storage call inside the tool functions. The simplest clean shape: have `_get_conn()` remain
-as-is and add a small helper or `with _db_lock:` block in each tool around the
-`storage.*(...)` call. Do not add locking inside `storage.py` — it is a pure-function layer
-over a connection and should stay thread-agnostic (this also keeps tests, which open their
-own connections, unaffected).
-
-**Tests.** A deterministic concurrency test is not practical here; rely on code review. Do
-not add a flaky timing-based test.
-
-**Docs.** Update `OVERVIEW.md` "Connection Lifecycle and Testing" to state that tool-level
-access is serialized by a lock and why.
-
----
-
-## Task 4 — Drop the unused `INTERESTING_CLIENT_SECRET` (decision: confirmed by owner)
-
-**Problem.** The working tree already switched `token_endpoint_auth_method` to `"none"`, so
-the client secret no longer participates in authentication, yet `_auth_enabled`
-(`server.py` ~line 45) still requires `INTERESTING_CLIENT_SECRET` and the startup warning
-in `__main__` tells users to set it.
+**Problem.** The day values in `_CADENCE_DAYS` (`storage.py:26`) are eligibility tuning only,
+but are hardcoded. `_CADENCE_ELIGIBILITY_CLAUSE` is additionally **precomputed at module load**
+(`storage.py:64`), so it cannot reflect runtime config.
 
 **Fix.**
-- Remove `_client_secret` and its env read.
-- `_auth_enabled = bool(_client_id and _access_token_value)`.
-- Update the HTTP-without-auth startup warning to mention only `INTERESTING_CLIENT_ID` and
-  `INTERESTING_ACCESS_TOKEN`.
-- Remove `INTERESTING_CLIENT_SECRET` from `.env.example`, `README.md`, and the `OVERVIEW.md`
-  Configuration table and Authentication section.
+- Add `INTERESTING_CADENCE_DAYS` to `config.py` as comma-separated `key:days` pairs (e.g.
+  `rare:14,occasional:7,regular:3,frequent:1`). Validation:
+  - each key must be in `KNOWN_CADENCES` **and not** `always` (whose interval is `None` =
+    no minimum; it is not a day count and cannot be overridden);
+  - `days` must parse to `int >= 1`;
+  - unknown key, the `always` key, malformed pair, or bad `days` → `ValueError`;
+  - unspecified keys fall back to the defaults, so a deployment can override just one.
+  The validated result is a full `dict[str, int | None]` merged over the defaults.
+- Add a `cadence_days: dict[str, int | None] = _CADENCE_DAYS` parameter to
+  `storage.list_topics`. **Move clause construction into `list_topics`** (build from the
+  passed-in map per call) and delete the module-level `_CADENCE_ELIGIBILITY_CLAUSE` /
+  precompute. Per-call rebuild of a short SQL string is negligible and removes hidden
+  module-level state. Keep `_build_cadence_eligibility_clause` as a helper that takes the map.
+  - **Note:** `days` is f-string-interpolated into SQL (not a bound parameter), so the
+    `int >= 1` validation in `config.py` is the only thing standing between input and the
+    query — keep it strict.
+- In the `list_topics` tool, pass `cadence_days=config.CADENCE_DAYS`.
 
-**Tests.** None required (auth is exercised only indirectly today); just ensure the suite
-still passes and grep the repo for `CLIENT_SECRET` to confirm no stragglers.
+**Tests.**
+- `tests/test_config.py`: single override; partial override leaves other keys at default;
+  rejects non-int days, `0`/negative, unknown key, `always` override, and malformed pairs.
+- Behavioral: with `regular:1`, a 25-hour-old `regular` topic appears in
+  `list_topics(roundup=True)` where the default 3-day interval would exclude it.
+- Default-preservation regression: with no env set, the effective map equals today's
+  `_CADENCE_DAYS` (guards against default drift).
 
----
-
-## Task 5 — Add `clear_notes` flag to `update_topic` (decision: confirmed by owner)
-
-**Problem.** The storage layer already supports clearing notes
-(`update_topic(..., notes=None, update_notes=True)`), but the server tool treats empty
-string as "leave unchanged", so once set, notes can never be removed.
-
-**Fix.** In the `update_topic` tool in `server.py`:
-- Add parameter `clear_notes: bool = False`.
-- Validation: `clear_notes=True` together with a non-empty `notes` value is a `ValueError`
-  ("pass either notes or clear_notes, not both").
-- `clear_notes=True` counts toward the "at least one field provided" check.
-- When set, call storage with `notes=None, update_notes=True`.
-- Extend the tool description to document the flag.
-
-**Tests.** Add to `tests/test_server.py`:
-- Set notes, call `update_topic` with `clear_notes=True`, verify `notes` is `null` in the
-  response and in a subsequent `list_topics`.
-- `clear_notes=True` plus non-empty `notes` fails.
-- `clear_notes=True` as the only field succeeds (satisfies "at least one").
-- `clear_notes=False` (default) leaves existing notes unchanged (already covered, keep).
-
-**Docs.** This is a tool-contract change: update `interesting-mcp-reference.md` (single
-source of truth for the `interesting://instructions` resource — required by `CLAUDE.md`)
-and the `OVERVIEW.md` storage-function table if wording there needs it.
+**Docs.** README.md + `.env.example` (format/fallback notes); `OVERVIEW.md` "Roundup
+Rotation" (clause now built per-call from configurable days) + "Configuration".
+`interesting-mcp-reference.md` — replace specific day counts with "N days (default: X)"
+wherever cadence intervals appear; the reference doc is consumed by the AI client as the
+`interesting://instructions` resource, so it must stay correct across deployments.
 
 ---
 
-## Task 6 — Back up the database before applying migrations
+## Deferred — flag the tradeoff before implementing
 
-**Problem.** `storage.init_db` auto-migrates the production database on startup with no
-backup; current backups are manual folder copies (`data/production - Copy (2)` etc.).
-
-**Fix.** In `init_db`, after computing the effective `version` but before applying any
-migration block, if `version < _SCHEMA_VERSION` **and** the database file already exists
-with content (skip for brand-new databases), create a backup:
-
-```sql
-VACUUM INTO '<db_path>.pre-migration-v<version>-<YYYYMMDDTHHMMSSZ>.db'
-```
-
-Use a UTC timestamp, log the backup path at INFO level, and raise (do not proceed with
-migrations) if the backup statement fails. Do not implement retention/pruning — old backups
-are the operator's concern.
-
-**Tests.** Reuse the v3-database builder pattern from
-`test_migration_v3_to_v4_backfills_frequent` in `tests/test_server.py`: open a v3 database,
-run `init_db`, assert exactly one `*.pre-migration-v3-*.db` file exists next to it. Also
-assert that opening a fresh database creates no backup file, and that re-opening an
-up-to-date database creates no backup file.
-
-**Docs.** Add a short paragraph to `OVERVIEW.md` Database Schema section.
-
----
-
-## Task 7 — Add a type checker (mypy)
-
-**Problem.** `CLAUDE.md` mandates strict type annotations but nothing enforces them.
-
-**Fix.**
-- Add `mypy>=1.14` to the `dev` dependency group in `pyproject.toml`.
-- Add a `[tool.mypy]` section: `python_version = "3.11"`, `strict = true`,
-  `files = ["src"]`. Run it over `src` only at first; tests use intentional
-  `# type: ignore[union-attr]` patterns and can be brought under checking later.
-- Fix whatever `mypy` reports in `src/` (expected to be small; annotations are already
-  thorough). If a finding requires a behavioral decision, leave a `# type: ignore[<code>]`
-  with the specific error code rather than restructuring.
-- Add a row to the `CLAUDE.md` Commands table: `Type check | mypy`.
-
-**Verification.** `mypy` exits 0.
-
----
-
-## Task 8 — Minor cleanups (single commit)
-
-1. **Delete `tests/test_placeholder.py`** — dead file.
-2. **Prune expired OAuth codes.** In `_SingleUserOAuthProvider.authorize`
-   (`server.py` ~line 82), before storing the new code, drop entries from
-   `self._pending_codes` whose `expires_at < time.time()`. Keeps the dict bounded across
-   abandoned auth attempts in a long-lived process.
-3. **Comment the static-token TTL mismatch.** In `exchange_authorization_code`, add a brief
-   comment noting that `expires_in=_TOKEN_TTL` is advisory only: `load_access_token` never
-   expires the static token; expiry merely prompts the client to redo the auth flow. This is
-   a constraint the code cannot otherwise show.
+- **Tier 2/3 tunables** (`INTERESTING_TITLE_MAX`, `INTERESTING_NOTES_MAX`,
+  `INTERESTING_HTTP_PORT`, auth TTLs `_AUTH_CODE_TTL` / `_TOKEN_TTL` / `_AUTH_CODE_BYTES`).
+  Same `config.py` pattern. `128` and `512` appear as literal numbers in
+  `interesting-mcp-reference.md` (the `interesting://instructions` resource consumed by the AI
+  client) and tool descriptions; if made configurable, replace them with "up to N characters
+  (default: 128/512)" — same approach as Task 10's cadence intervals. The HTTP port is
+  currently not even a named constant (FastMCP default + `_DEFAULT_BASE_URL`); promote to a
+  named constant first if it becomes configurable.
+- **`DEFAULT_CADENCE` / `DEFAULT_SCOPE` as env vars.** Safe-ish but low demand; defer unless
+  a concrete need appears. `DEFAULT_SCOPE` in particular is woven into the scope-hierarchy
+  logic — treat as stored-data-adjacent and keep hardcoded.
 
 ---
 
 ## Deferred — needs analysis and discussion first; do NOT implement
 
 These were reviewed but the owner wants a design discussion before choosing a solution.
-Do not change behavior in these areas beyond what the tasks above require.
 
-- **`_REFERENCE_DOC` cwd dependence** (`server.py` ~line 270). The reference doc resolves
-  from `Path.cwd()` at import time; a test (`test_reference_doc_path_is_cwd_relative`)
-  asserts this is intentional. Candidate options to discuss: fail fast at startup if
-  missing; ship the doc as package data via `importlib.resources`; resolve relative to a
-  configurable root. Leave as-is for now.
+- **`_REFERENCE_DOC` cwd dependence** (`server.py`). The reference doc resolves from
+  `Path.cwd()` at import time; a test (`test_reference_doc_path_is_cwd_relative`) asserts this
+  is intentional. Candidate options: fail fast at startup if missing; ship the doc as package
+  data via `importlib.resources`; resolve relative to a configurable root. Leave as-is for now.
 - **CI setup.** No automated checks run on PRs. Candidate shape: GitHub Actions workflow
-  running `pytest`, `ruff check`, `ruff format --check` (plus `mypy` after Task 7) on
-  Windows and Linux. Needs discussion (runner choice, uv vs pip, branch protection).
+  running `pytest`, `ruff check`, `ruff format --check`, and `mypy` on Windows and Linux.
+  Needs discussion (runner choice, uv vs pip, branch protection).
