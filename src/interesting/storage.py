@@ -231,6 +231,7 @@ def list_topics(
     scope: str | None = None,
     roundup: bool = False,
     include_archived: bool = False,
+    roundup_limit: int = _ROUNDUP_LIMIT,
 ) -> list[Topic]:
     conditions: list[str] = []
     params: list[str] = []
@@ -252,7 +253,7 @@ def list_topics(
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
     if roundup:
-        order_limit = f" ORDER BY last_checked_at ASC, RANDOM() LIMIT {_ROUNDUP_LIMIT}"
+        order_limit = f" ORDER BY last_checked_at ASC, RANDOM() LIMIT {roundup_limit}"
     else:
         order_limit = " ORDER BY title"
 

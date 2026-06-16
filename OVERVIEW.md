@@ -21,10 +21,12 @@
 ```
 src/interesting/
     __init__.py       empty package marker
+    config.py         runtime configuration -- env var parsing, typed module-level values
     storage.py        database layer -- pure functions over a sqlite3.Connection
     server.py         MCP server -- tool definitions, validation, connection lifecycle
 
 tests/
+    test_config.py    unit tests for config.py parsing
     test_server.py    integration tests via MCP client/server session
     test_db_path.py   unit tests for path resolution logic
 
@@ -123,7 +125,7 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 Eligibility runs as a SQL filter before rotation: a topic is eligible when its cadence is `'always'`, when `last_checked_at IS NULL`, or when `datetime(last_checked_at) <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. The clause is built from `_CADENCE_DAYS` once at module load (`_CADENCE_ELIGIBILITY_CLAUSE`) and appended to the WHERE conditions only when `roundup=True`. Wrapping the stored value in `datetime()` is required because `last_checked_at` is written as a Python isoformat string (e.g. `2026-06-11T16:57:46.495858+00:00`, using a `T` separator and `+00:00` offset), whereas SQLite's `datetime('now', ...)` produces `2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, a bare string comparison would wrongly report same-day timestamps as ineligible; `datetime()` on both sides normalizes to SQLite's canonical `YYYY-MM-DD HH:MM:SS` format, making the comparison correct.
 
-After eligibility filtering, the query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT 6`. SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE; if eligibility filtering returns zero rows, the update is skipped. The `_ROUNDUP_LIMIT = 6` constant controls the batch size.
+After eligibility filtering, the query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT` equal to `roundup_limit` (a parameter of `list_topics`, defaulting to `_ROUNDUP_LIMIT = 6`). SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE; if eligibility filtering returns zero rows, the update is skipped. The batch size is configurable via `INTERESTING_ROUNDUP_LIMIT` (parsed by `config.py`); see the Configuration section below.
 
 The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs.
 
@@ -173,8 +175,20 @@ Because these limitations are claude.ai-side, the reliable way to use the server
 | Source | Precedence | Variables / flags |
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
-| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL` |
-| Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled |
+| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL`, `INTERESTING_ROUNDUP_LIMIT` |
+| Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled, roundup limit 6 |
+
+### Behavior tunables (`config.py`)
+
+`src/interesting/config.py` owns all env reads for behavior tunables and exposes typed, validated module-level values. It is safe to import in tests -- no filesystem I/O at import, and bad values raise `ValueError` at import time (fail fast). `server.py` imports `config` and passes its values into storage calls as parameters.
+
+Guiding rule: **tune behavior, never tune stored-data semantics.** The following are intentionally hardcoded and cannot be overridden: `KNOWN_CADENCES` keys, `_MIGRATION_CADENCE`, status constants, `_SCHEMA_VERSION`, `DEFAULT_SCOPE`, `_CONTAINED_SCOPES`, and `_DATA_DIR`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `INTERESTING_ROUNDUP_LIMIT` | `6` | Maximum topics returned per roundup call. Must be a positive integer (`>= 1`). |
+
+### Database path resolution
 
 `_db_path` is `None` at import time and resolved inside `_lifespan` at startup, so importing the module for tests or tooling does not trigger environment variable reads or filesystem access.
 

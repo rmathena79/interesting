@@ -126,6 +126,7 @@ CLI arguments take precedence over environment variables.
 | `MCP_TRANSPORT` | `stdio` | Transport to use: `stdio` or `streamable-http` |
 | `INTERESTING_DB_PATH` | `data/interesting.db` | Path to the SQLite database file |
 | `INTERESTING_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated allowed `Host` header values; add your server's hostname for HTTP mode |
+| `INTERESTING_ROUNDUP_LIMIT` | `6` | Maximum topics returned per roundup call. Must be a positive integer. |
 
 ### Authentication (HTTP mode only)
 

@@ -25,7 +25,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from interesting import storage
+from interesting import config, storage
 
 # The MCP library hardcodes token_endpoint_auth_methods_supported to only
 # client_secret variants, but Claude uses PKCE without a client secret.
@@ -350,10 +350,11 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
         "Set roundup=true when calling as part of a news roundup -- the server returns at most "
-        "6 topics, prioritizing those least recently checked (null last_checked_at first, then "
-        "oldest), with random tiebreaking, and records last_checked_at for each returned topic. "
+        "the configured limit (6 by default), prioritizing those least recently checked "
+        "(null last_checked_at first, then oldest), with random tiebreaking, and records "
+        "last_checked_at for each returned topic. "
         "In roundup mode, topics still within their cadence cooldown are excluded before "
-        "rotation runs, so the result may contain fewer than 6 topics (or be empty) when "
+        "rotation runs, so the result may contain fewer than the limit (or be empty) when "
         "everything tracked has been checked recently; cadence has no effect on non-roundup "
         "listings. "
         "Without roundup=true, all matching topics are returned sorted by title. "
@@ -374,7 +375,11 @@ def list_topics(scope: str = "", roundup: bool = False, include_archived: bool =
     resolved = scope if scope else None
     with _db_lock:
         topics = storage.list_topics(
-            _get_conn(), scope=resolved, roundup=roundup, include_archived=include_archived
+            _get_conn(),
+            scope=resolved,
+            roundup=roundup,
+            include_archived=include_archived,
+            roundup_limit=config.ROUNDUP_LIMIT,
         )
     return json.dumps([t.to_dict() for t in topics])
 

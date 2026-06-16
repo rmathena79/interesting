@@ -603,7 +603,7 @@ async def test_add_topic_notes_max_length_succeeds() -> None:
 
 async def test_add_topic_notes_non_ascii_fails() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "focus on — dash"})  # non-ASCII em dash is the test payload
+        result = await client.call_tool("add_topic", {"title": "Topic", "notes": "focus on — dash"})
     assert result.isError
 
 
@@ -1244,3 +1244,29 @@ async def test_instructions_resource_mentions_cadence() -> None:
     text = result.contents[0].text  # type: ignore[union-attr]
     for keyword in ("cadence", "rare", "occasional", "regular", "frequent", "always"):
         assert keyword in text, f"instructions missing cadence keyword: {keyword!r}"
+
+
+# --- ROUNDUP_LIMIT behavioral and storage-layer tests ---
+
+
+async def test_roundup_limit_cap_behavioral(monkeypatch: pytest.MonkeyPatch) -> None:
+    import interesting.config as config_module
+
+    monkeypatch.setattr(config_module, "ROUNDUP_LIMIT", 2)
+    async with create_connected_server_and_client_session(mcp) as client:
+        for i in range(5):
+            await client.call_tool("add_topic", {"title": f"Topic {i:02d}"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) <= 2
+
+
+def test_roundup_limit_storage_layer(tmp_path: pathlib.Path) -> None:
+    db_path = str(tmp_path / "test.db")
+    conn = storage.init_db(db_path)
+    for i in range(5):
+        storage.add_topic(conn, f"Topic {i:02d}", "world")
+    topics = storage.list_topics(conn, roundup=True, roundup_limit=2)
+    conn.close()
+    assert len(topics) <= 2

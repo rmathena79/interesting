@@ -138,7 +138,7 @@ Parameters:
 
 **Without `roundup=true`:** Returns all matching active topics sorted by title. Cadence does not affect this mode.
 
-**With `roundup=true` (rotation mode):** Returns at most 6 active topics, prioritizing those least recently checked -- topics with `last_checked_at = null` first, then oldest checked, with random tiebreaking among equals. Topics still within their cadence cooldown are filtered out before the rotation/limit runs, so the result may contain fewer than 6 topics -- or be empty -- when everything tracked has been checked recently. The server records `last_checked_at` for every returned topic. This ensures that over successive roundup calls, all tracked topics are visited in rotation rather than the same topics being returned every time.
+**With `roundup=true` (rotation mode):** Returns up to N (configurable) active topics, prioritizing those least recently checked -- topics with `last_checked_at = null` first, then oldest checked, with random tiebreaking among equals. Topics still within their cadence cooldown are filtered out before the rotation/limit runs, so the result may contain fewer than the limit -- or be empty -- when everything tracked has been checked recently. The server records `last_checked_at` for every returned topic. This ensures that over successive roundup calls, all tracked topics are visited in rotation rather than the same topics being returned every time.
 
 Returns: JSON array of `{id, title, scope, added_at, last_checked_at, notes, status, cadence}` objects. Empty array if nothing is tracked or if all eligible topics are still within their cadence cooldown.
 - `added_at`: ISO 8601 UTC timestamp set when the topic was added; `null` for topics added before this field existed.
@@ -219,7 +219,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | timeframe | `Xh` or `Xd` (hours/days) | `48h` |
 
 **Workflow:**
-1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns at most 6 active topics (those least recently checked) after filtering out any still within their cadence cooldown, applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup -- this is by design. The result may contain fewer than 6 topics, or be empty, when everything tracked has been checked recently.
+1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns up to N (configurable) active topics (those least recently checked) after filtering out any still within their cadence cooldown, applies the containment rule (see Filtering rule above), and records `last_checked_at` for each returned topic. Not all tracked topics will appear in every roundup -- this is by design. The result may contain fewer than the limit, or be empty, when everything tracked has been checked recently.
 2. For each returned topic, review its `notes` field before searching. Use notes to sharpen the search query -- adjust angle, include alternate names, exclude irrelevant terms.
 3. Search for new developments on each returned tracked topic within the requested timeframe.
 4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
