@@ -319,9 +319,10 @@ def get_instructions_tool() -> str:
     description=(
         "Adds a topic of interest and returns the created entry. "
         "cadence controls how often the topic is eligible for roundup inclusion: "
-        "'rare' (~every two weeks), 'occasional' (~weekly), 'regular' (~every three days, "
-        "default), 'frequent' (~daily), or 'always' (no minimum interval). "
-        "Pick 'frequent' for breaking stories, 'rare' for slow-burn confirmations."
+        "'rare' (14-day minimum by default), 'occasional' (7-day), 'regular' (3-day, "
+        "default cadence), 'frequent' (1-day), or 'always' (no minimum). "
+        "Pick 'frequent' for breaking stories, 'rare' for slow-burn confirmations. "
+        "Minimums are configurable by the server operator."
     )
 )
 def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -> str:
@@ -380,6 +381,7 @@ def list_topics(scope: str = "", roundup: bool = False, include_archived: bool =
             roundup=roundup,
             include_archived=include_archived,
             roundup_limit=config.ROUNDUP_LIMIT,
+            cadence_days=config.CADENCE_DAYS,
         )
     return json.dumps([t.to_dict() for t in topics])
 

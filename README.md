@@ -127,6 +127,7 @@ CLI arguments take precedence over environment variables.
 | `INTERESTING_DB_PATH` | `data/interesting.db` | Path to the SQLite database file |
 | `INTERESTING_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated allowed `Host` header values; add your server's hostname for HTTP mode |
 | `INTERESTING_ROUNDUP_LIMIT` | `6` | Maximum topics returned per roundup call. Must be a positive integer. |
+| `INTERESTING_CADENCE_DAYS` | (see below) | Comma-separated `key:days` pairs overriding cadence cooldown intervals (e.g. `rare:14,regular:2`). Unknown keys, the `always` key, non-integer values, and values `<= 0` are rejected. Unspecified cadences use their defaults. |
 
 ### Authentication (HTTP mode only)
 

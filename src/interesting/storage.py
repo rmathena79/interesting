@@ -35,7 +35,7 @@ DEFAULT_CADENCE = "regular"  # default for new topics
 _MIGRATION_CADENCE = "frequent"  # backfill for existing rows in the v4 migration
 
 
-def _build_cadence_eligibility_clause() -> str:
+def _build_cadence_eligibility_clause(cadence_days: dict[str, int | None]) -> str:
     """SQL fragment that selects topics eligible for inclusion in a roundup.
 
     A topic is eligible if its cadence is 'always', if it has never been checked
@@ -48,9 +48,12 @@ def _build_cadence_eligibility_clause() -> str:
     in datetime() normalizes both sides to the same format so the comparison is
     correct; without it the 'T' separator causes same-day checks to appear
     ineligible.
+
+    days values are f-string-interpolated into the SQL (not bound parameters);
+    callers are responsible for ensuring all days values are integers >= 1.
     """
     parts = ["cadence = 'always'", "last_checked_at IS NULL"]
-    for cadence, days in _CADENCE_DAYS.items():
+    for cadence, days in cadence_days.items():
         if days is None:
             continue
         clause = (
@@ -59,9 +62,6 @@ def _build_cadence_eligibility_clause() -> str:
         )
         parts.append(clause)
     return "(" + " OR ".join(parts) + ")"
-
-
-_CADENCE_ELIGIBILITY_CLAUSE = _build_cadence_eligibility_clause()
 
 
 def get_scope_hierarchy() -> dict[str, list[str]]:
@@ -232,6 +232,7 @@ def list_topics(
     roundup: bool = False,
     include_archived: bool = False,
     roundup_limit: int = _ROUNDUP_LIMIT,
+    cadence_days: dict[str, int | None] = _CADENCE_DAYS,
 ) -> list[Topic]:
     conditions: list[str] = []
     params: list[str] = []
@@ -248,7 +249,7 @@ def list_topics(
 
     if roundup:
         # Filter out topics still within their cadence cooldown before rotation runs.
-        conditions.append(_CADENCE_ELIGIBILITY_CLAUSE)
+        conditions.append(_build_cadence_eligibility_clause(cadence_days))
 
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 

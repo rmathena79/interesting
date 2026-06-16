@@ -1270,3 +1270,34 @@ def test_roundup_limit_storage_layer(tmp_path: pathlib.Path) -> None:
     topics = storage.list_topics(conn, roundup=True, roundup_limit=2)
     conn.close()
     assert len(topics) <= 2
+
+
+# --- CADENCE_DAYS behavioral test ---
+
+
+async def test_cadence_days_regular_1_day_override(
+    monkeypatch: pytest.MonkeyPatch, isolated_db: str
+) -> None:
+    """With regular:1, a 25-hour-old 'regular' topic is eligible; default 3-day excludes it."""
+    import interesting.config as config_module
+
+    overridden = dict(storage._CADENCE_DAYS)
+    overridden["regular"] = 1
+    monkeypatch.setattr(config_module, "CADENCE_DAYS", overridden)
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Regular 25h", "cadence": "regular"}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate to 25 hours ago -- past the 1-day cooldown, inside the default 3-day cooldown.
+        stamp = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        conn = sqlite3.connect(isolated_db)
+        try:
+            conn.execute("UPDATE topics SET last_checked_at = ? WHERE id = ?", (stamp, topic_id))
+            conn.commit()
+        finally:
+            conn.close()
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id

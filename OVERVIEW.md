@@ -123,11 +123,11 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 `list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode.
 
-Eligibility runs as a SQL filter before rotation: a topic is eligible when its cadence is `'always'`, when `last_checked_at IS NULL`, or when `datetime(last_checked_at) <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. The clause is built from `_CADENCE_DAYS` once at module load (`_CADENCE_ELIGIBILITY_CLAUSE`) and appended to the WHERE conditions only when `roundup=True`. Wrapping the stored value in `datetime()` is required because `last_checked_at` is written as a Python isoformat string (e.g. `2026-06-11T16:57:46.495858+00:00`, using a `T` separator and `+00:00` offset), whereas SQLite's `datetime('now', ...)` produces `2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, a bare string comparison would wrongly report same-day timestamps as ineligible; `datetime()` on both sides normalizes to SQLite's canonical `YYYY-MM-DD HH:MM:SS` format, making the comparison correct.
+Eligibility runs as a SQL filter before rotation: a topic is eligible when its cadence is `'always'`, when `last_checked_at IS NULL`, or when `datetime(last_checked_at) <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. The clause is built per-call inside `list_topics` from the `cadence_days` parameter (defaulting to `_CADENCE_DAYS`) by `_build_cadence_eligibility_clause(cadence_days)`, and appended to the WHERE conditions only when `roundup=True`. The `days` values are f-string-interpolated into the SQL (not bound parameters); the `int >= 1` validation in `config.py` is the guard between the env input and the query. Wrapping the stored value in `datetime()` is required because `last_checked_at` is written as a Python isoformat string (e.g. `2026-06-11T16:57:46.495858+00:00`, using a `T` separator and `+00:00` offset), whereas SQLite's `datetime('now', ...)` produces `2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, a bare string comparison would wrongly report same-day timestamps as ineligible; `datetime()` on both sides normalizes to SQLite's canonical `YYYY-MM-DD HH:MM:SS` format, making the comparison correct.
 
 After eligibility filtering, the query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT` equal to `roundup_limit` (a parameter of `list_topics`, defaulting to `_ROUNDUP_LIMIT = 6`). SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE; if eligibility filtering returns zero rows, the update is skipped. The batch size is configurable via `INTERESTING_ROUNDUP_LIMIT` (parsed by `config.py`); see the Configuration section below.
 
-The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs.
+The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs. The day values (not the keys) are configurable via `INTERESTING_CADENCE_DAYS`; see the Configuration section below.
 
 ## Connection Lifecycle and Testing
 
@@ -175,8 +175,8 @@ Because these limitations are claude.ai-side, the reliable way to use the server
 | Source | Precedence | Variables / flags |
 |---|---|---|
 | CLI arguments | Highest | `--transport`, `--db` |
-| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL`, `INTERESTING_ROUNDUP_LIMIT` |
-| Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled, roundup limit 6 |
+| Environment variables | Middle | `MCP_TRANSPORT`, `INTERESTING_DB_PATH`, `INTERESTING_ALLOWED_HOSTS`, `INTERESTING_CLIENT_ID`, `INTERESTING_ACCESS_TOKEN`, `INTERESTING_BASE_URL`, `INTERESTING_ROUNDUP_LIMIT`, `INTERESTING_CADENCE_DAYS` |
+| Defaults | Lowest | `stdio`, `data/interesting.db`, `localhost,127.0.0.1` (allowed hosts), auth disabled, roundup limit 6, cadence days as in `_CADENCE_DAYS` |
 
 ### Behavior tunables (`config.py`)
 
@@ -187,6 +187,7 @@ Guiding rule: **tune behavior, never tune stored-data semantics.** The following
 | Variable | Default | Description |
 |---|---|---|
 | `INTERESTING_ROUNDUP_LIMIT` | `6` | Maximum topics returned per roundup call. Must be a positive integer (`>= 1`). |
+| `INTERESTING_CADENCE_DAYS` | `rare:14,occasional:7,regular:3,frequent:1` | Comma-separated `key:days` pairs overriding cadence cooldown intervals. Unknown keys, the `always` key, non-integer values, and values `<= 0` are rejected. Unspecified cadences fall back to their defaults. `always` cannot be overridden (its interval is `None`, not a day count). |
 
 ### Database path resolution
 
