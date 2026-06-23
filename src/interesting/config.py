@@ -57,10 +57,10 @@ def _parse_cadence_days(raw: str) -> dict[str, int | None]:
             raise ValueError(
                 f"INTERESTING_CADENCE_DAYS: unknown cadence key {key!r}; known keys: {valid}"
             )
-        if key == "always":
+        if key in ("always", "dated"):
             raise ValueError(
-                "INTERESTING_CADENCE_DAYS: 'always' cannot be overridden"
-                " (its interval is None, not a day count)"
+                f"INTERESTING_CADENCE_DAYS: {key!r} cannot be overridden"
+                f" (its interval is None, not a day count)"
             )
         try:
             days = int(days_str)

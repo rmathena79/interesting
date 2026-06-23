@@ -7,6 +7,7 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
 
+import interesting.config as config_module
 import interesting.server as server_module
 from interesting import storage
 from interesting.server import mcp
@@ -916,7 +917,7 @@ async def test_add_topic_default_cadence() -> None:
 
 async def test_add_topic_explicit_cadences() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
-        for value in ("rare", "occasional", "regular", "frequent", "always"):
+        for value in ("rare", "occasional", "regular", "frequent", "always", "dated"):
             result = await client.call_tool(
                 "add_topic", {"title": f"Topic {value}", "cadence": value}
             )
@@ -1142,15 +1143,19 @@ def test_migration_v3_to_v4_backfills_frequent(tmp_path: pathlib.Path) -> None:
     conn = storage.init_db(db_path)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == 5
         cadence = conn.execute("SELECT cadence FROM topics WHERE id = 'legacy-id'").fetchone()[0]
         assert cadence == "frequent"
+        next_check_at = conn.execute(
+            "SELECT next_check_at FROM topics WHERE id = 'legacy-id'"
+        ).fetchone()[0]
+        assert next_check_at is None
     finally:
         conn.close()
 
 
 def test_migration_legacy_v3_columns_detected(tmp_path: pathlib.Path) -> None:
-    """A pre-versioning database with v3-shaped columns gets the v4 migration applied."""
+    """A pre-versioning database with v3-shaped columns gets the v4+v5 migrations applied."""
     db_path = str(tmp_path / "legacy.db")
     raw = sqlite3.connect(db_path)
     try:
@@ -1179,7 +1184,7 @@ def test_migration_legacy_v3_columns_detected(tmp_path: pathlib.Path) -> None:
     conn = storage.init_db(db_path)
     try:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == 5
         cadence = conn.execute("SELECT cadence FROM topics WHERE id = 'old-id'").fetchone()[0]
         assert cadence == "frequent"
     finally:
@@ -1242,7 +1247,7 @@ async def test_instructions_resource_mentions_cadence() -> None:
     async with create_connected_server_and_client_session(mcp) as client:
         result = await client.read_resource(AnyUrl("interesting://instructions"))
     text = result.contents[0].text  # type: ignore[union-attr]
-    for keyword in ("cadence", "rare", "occasional", "regular", "frequent", "always"):
+    for keyword in ("cadence", "rare", "occasional", "regular", "frequent", "always", "dated"):
         assert keyword in text, f"instructions missing cadence keyword: {keyword!r}"
 
 
@@ -1250,8 +1255,6 @@ async def test_instructions_resource_mentions_cadence() -> None:
 
 
 async def test_roundup_limit_cap_behavioral(monkeypatch: pytest.MonkeyPatch) -> None:
-    import interesting.config as config_module
-
     monkeypatch.setattr(config_module, "ROUNDUP_LIMIT", 2)
     async with create_connected_server_and_client_session(mcp) as client:
         for i in range(5):
@@ -1279,8 +1282,6 @@ async def test_cadence_days_regular_1_day_override(
     monkeypatch: pytest.MonkeyPatch, isolated_db: str
 ) -> None:
     """With regular:1, a 25-hour-old 'regular' topic is eligible; default 3-day excludes it."""
-    import interesting.config as config_module
-
     overridden = dict(storage._CADENCE_DAYS)
     overridden["regular"] = 1
     monkeypatch.setattr(config_module, "CADENCE_DAYS", overridden)
@@ -1301,3 +1302,324 @@ async def test_cadence_days_regular_1_day_override(
     data = json.loads(result.content[0].text)  # type: ignore[union-attr]
     assert len(data) == 1
     assert data[0]["id"] == topic_id
+
+
+# --- next_check_at / dated cadence tests ---
+
+
+async def test_add_topic_without_next_check_at_returns_null() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool("add_topic", {"title": "No target"})
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["next_check_at"] is None
+
+
+async def test_add_topic_with_next_check_at() -> None:
+    target = "2027-01-01T00:00:00+00:00"
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool(
+            "add_topic",
+            {"title": "Future event", "cadence": "dated", "next_check_at": target},
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["next_check_at"] is not None
+    assert data["cadence"] == "dated"
+
+
+async def test_add_topic_invalid_next_check_at_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool(
+            "add_topic", {"title": "Topic", "next_check_at": "not-a-date"}
+        )
+    assert result.isError
+
+
+async def test_add_topic_next_check_at_without_timezone_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool(
+            "add_topic", {"title": "Topic", "next_check_at": "2027-01-01T00:00:00"}
+        )
+    assert result.isError
+
+
+async def test_add_topic_next_check_at_z_suffix_accepted() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        result = await client.call_tool(
+            "add_topic", {"title": "Topic", "next_check_at": "2027-01-01T00:00:00Z"}
+        )
+    assert not result.isError
+
+
+async def test_update_topic_next_check_at() -> None:
+    target = "2027-06-01T12:00:00+00:00"
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "next_check_at": target}
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["next_check_at"] is not None
+
+
+async def test_update_topic_clear_next_check_at() -> None:
+    target = "2027-06-01T12:00:00+00:00"
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "My Topic", "next_check_at": target}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "clear_next_check_at": True}
+        )
+    assert not result.isError
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data["next_check_at"] is None
+
+
+async def test_update_topic_next_check_at_and_clear_together_fails() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic",
+            {
+                "id": topic_id,
+                "next_check_at": "2027-01-01T00:00:00Z",
+                "clear_next_check_at": True,
+            },
+        )
+    assert result.isError
+
+
+async def test_update_topic_next_check_at_satisfies_at_least_one() -> None:
+    target = "2027-06-01T12:00:00+00:00"
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "next_check_at": target}
+        )
+    assert not result.isError
+
+
+async def test_update_topic_clear_next_check_at_satisfies_at_least_one() -> None:
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool("add_topic", {"title": "My Topic"})
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        result = await client.call_tool(
+            "update_topic", {"id": topic_id, "clear_next_check_at": True}
+        )
+    assert not result.isError
+
+
+async def test_update_topic_omitting_next_check_at_leaves_unchanged() -> None:
+    target = "2027-06-01T12:00:00+00:00"
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "My Topic", "next_check_at": target}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("update_topic", {"id": topic_id, "title": "Renamed"})
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    assert data[0]["next_check_at"] is not None
+
+
+async def test_roundup_dated_topic_without_next_check_at_excluded() -> None:
+    """A dated topic with no next_check_at is permanently dormant."""
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool("add_topic", {"title": "Dated no target", "cadence": "dated"})
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data == []
+
+
+async def test_roundup_dated_topic_future_next_check_at_excluded() -> None:
+    """A dated topic whose next_check_at is in the future is excluded from roundup."""
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool(
+            "add_topic", {"title": "Future dated", "cadence": "dated", "next_check_at": future}
+        )
+        result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert data == []
+
+
+async def test_roundup_dated_topic_past_next_check_at_included() -> None:
+    """A dated topic whose next_check_at is in the past is included in roundup."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Past dated", "cadence": "dated", "next_check_at": past}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        roundup_result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(roundup_result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id
+
+
+async def test_roundup_clears_next_check_at() -> None:
+    """After appearing in a roundup, next_check_at is cleared to null."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic", {"title": "One-shot", "cadence": "dated", "next_check_at": past}
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        await client.call_tool("list_topics", {"roundup": True})
+        list_result = await client.call_tool("list_topics", {"include_archived": False})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    topic = next(t for t in data if t["id"] == topic_id)
+    assert topic["next_check_at"] is None
+
+
+async def test_roundup_dated_dormant_after_first_check() -> None:
+    """A dated topic does not appear in a second roundup after next_check_at is cleared."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool(
+            "add_topic", {"title": "One-shot", "cadence": "dated", "next_check_at": past}
+        )
+        first = await client.call_tool("list_topics", {"roundup": True})
+        assert len(json.loads(first.content[0].text)) == 1  # type: ignore[union-attr]
+        second = await client.call_tool("list_topics", {"roundup": True})
+    assert json.loads(second.content[0].text) == []  # type: ignore[union-attr]
+
+
+async def test_roundup_non_dated_next_check_at_bypasses_cooldown(isolated_db: str) -> None:
+    """A non-dated topic with a reached next_check_at is eligible even within its cooldown."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        add_result = await client.call_tool(
+            "add_topic",
+            {"title": "Slow burner", "cadence": "rare", "next_check_at": past},
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        # Backdate last_checked_at to 3 days ago -- inside the 14-day rare cooldown.
+        _backdate_last_checked(isolated_db, topic_id, days_ago=3)
+        roundup_result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(roundup_result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == topic_id
+
+
+async def test_roundup_target_date_topics_prioritized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Topics with a reached next_check_at are returned before normally-eligible topics."""
+    monkeypatch.setattr(config_module, "ROUNDUP_LIMIT", 2)
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        # Two normal topics (eligible, never checked)
+        await client.call_tool("add_topic", {"title": "Normal A"})
+        await client.call_tool("add_topic", {"title": "Normal B"})
+        # One dated topic with a reached target
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Targeted", "cadence": "dated", "next_check_at": past}
+        )
+        targeted_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        roundup_result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(roundup_result.content[0].text)  # type: ignore[union-attr]
+    # With limit=2 and 3 eligible topics, the targeted topic must be in the result.
+    ids = [t["id"] for t in data]
+    assert targeted_id in ids
+
+
+async def test_roundup_older_target_date_returned_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Among triggered next_check_at topics, the one with the older target date comes first."""
+    monkeypatch.setattr(config_module, "ROUNDUP_LIMIT", 1)
+    older = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    newer = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        await client.call_tool(
+            "add_topic", {"title": "Newer target", "cadence": "dated", "next_check_at": newer}
+        )
+        add_result = await client.call_tool(
+            "add_topic", {"title": "Older target", "cadence": "dated", "next_check_at": older}
+        )
+        older_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        roundup_result = await client.call_tool("list_topics", {"roundup": True})
+    data = json.loads(roundup_result.content[0].text)  # type: ignore[union-attr]
+    assert len(data) == 1
+    assert data[0]["id"] == older_id
+
+
+# --- migration v4 to v5 test ---
+
+
+def test_migration_v4_to_v5_adds_next_check_at(tmp_path: pathlib.Path) -> None:
+    """A v4 database gets the next_check_at column added and set to NULL on existing rows."""
+    db_path = str(tmp_path / "v4.db")
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        raw.execute("INSERT INTO schema_version (version) VALUES (4)")
+        raw.execute(
+            """
+            CREATE TABLE topics (
+                id              TEXT PRIMARY KEY,
+                title           TEXT NOT NULL,
+                scope           TEXT NOT NULL,
+                added_at        TEXT,
+                last_checked_at TEXT,
+                notes           TEXT,
+                status          TEXT NOT NULL DEFAULT 'active',
+                cadence         TEXT NOT NULL DEFAULT 'frequent'
+            )
+            """
+        )
+        raw.execute(
+            "INSERT INTO topics (id, title, scope, status, cadence)"
+            " VALUES ('v4-id', 'V4 topic', 'world', 'active', 'regular')"
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = storage.init_db(db_path)
+    try:
+        version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+        assert version == 5
+        next_check_at = conn.execute(
+            "SELECT next_check_at FROM topics WHERE id = 'v4-id'"
+        ).fetchone()[0]
+        assert next_check_at is None
+    finally:
+        conn.close()
+
+
+def test_migration_v4_creates_backup(tmp_path: pathlib.Path) -> None:
+    """A pre-existing v4 database gets a backup file before migration to v5."""
+    db_path = str(tmp_path / "v4.db")
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        raw.execute("INSERT INTO schema_version (version) VALUES (4)")
+        raw.execute(
+            """
+            CREATE TABLE topics (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                cadence TEXT NOT NULL DEFAULT 'frequent'
+            )
+            """
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = storage.init_db(db_path)
+    conn.close()
+
+    backups = list(tmp_path.glob("*.pre-migration-v4-*.db"))
+    assert len(backups) == 1
+

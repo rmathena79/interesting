@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, AsyncIterator, Literal, cast
 
 import colorama
@@ -276,6 +277,21 @@ def _validate_cadence(cadence: str) -> None:
         raise ValueError(f"unknown cadence {cadence!r}; valid values: {valid}")
 
 
+def _validate_next_check_at(value: str) -> None:
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(
+            f"next_check_at must be a valid ISO 8601 timestamp"
+            f" (e.g. '2026-07-15T07:00:00Z'), got {value!r}"
+        )
+    if dt.tzinfo is None:
+        raise ValueError(
+            "next_check_at must include a timezone offset"
+            " (e.g. '2026-07-15T07:00:00Z' for UTC)"
+        )
+
+
 @mcp.tool(
     description=(
         "Returns the valid scopes and their containment relationships. "
@@ -320,13 +336,31 @@ def get_instructions_tool() -> str:
         "Adds a topic of interest and returns the created entry. "
         "cadence controls how often the topic is eligible for roundup inclusion: "
         "'rare' (14-day minimum by default), 'occasional' (7-day), 'regular' (3-day, "
-        "default cadence), 'frequent' (1-day), or 'always' (no minimum). "
-        "Pick 'frequent' for breaking stories, 'rare' for slow-burn confirmations. "
-        "Minimums are configurable by the server operator."
+        "default cadence), 'frequent' (1-day), 'always' (no minimum), or 'dated' "
+        "(one-shot: invisible until next_check_at is reached, then eligible once). "
+        "Pick 'frequent' for breaking stories, 'rare' for slow-burn confirmations, "
+        "'dated' for a one-time check on a known future event. "
+        "Minimums are configurable by the server operator. "
+        "next_check_at: optional ISO 8601 UTC timestamp scheduling a time-sensitive check. "
+        "For 'dated' topics this is the embargo date (required -- without it the topic is "
+        "permanently dormant). For other cadences it triggers an extra check on top of the "
+        "normal rotation. Always convert from the user's local timezone to UTC before setting."
     )
 )
-def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -> str:
-    logger.info("add_topic called title=%r scope=%r cadence=%r", title, scope, cadence)
+def add_topic(
+    title: str,
+    scope: str = "",
+    notes: str = "",
+    cadence: str = "",
+    next_check_at: str = "",
+) -> str:
+    logger.info(
+        "add_topic called title=%r scope=%r cadence=%r next_check_at=%r",
+        title,
+        scope,
+        cadence,
+        next_check_at,
+    )
     _validate_title(title)
     resolved_scope = scope if scope else storage.DEFAULT_SCOPE
     _validate_scope(resolved_scope)
@@ -334,6 +368,8 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
         _validate_notes(notes)
     resolved_cadence = cadence if cadence else storage.DEFAULT_CADENCE
     _validate_cadence(resolved_cadence)
+    if next_check_at:
+        _validate_next_check_at(next_check_at)
     with _db_lock:
         topic = storage.add_topic(
             _get_conn(),
@@ -341,6 +377,7 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
             resolved_scope,
             notes if notes else None,
             resolved_cadence,
+            next_check_at if next_check_at else None,
         )
     return json.dumps(topic.to_dict())
 
@@ -351,13 +388,15 @@ def add_topic(title: str, scope: str = "", notes: str = "", cadence: str = "") -
         "Pass scope to filter by geographic containment (pdx is contained in us, us in world); "
         "omit or pass empty string to return all topics regardless of scope. "
         "Set roundup=true when calling as part of a news roundup -- the server returns at most "
-        "the configured limit (6 by default), prioritizing those least recently checked "
-        "(null last_checked_at first, then oldest), with random tiebreaking, and records "
-        "last_checked_at for each returned topic. "
+        "the configured limit (6 by default) and records last_checked_at and clears "
+        "next_check_at for each returned topic. "
+        "Roundup ordering: topics with a reached next_check_at come first (oldest target date "
+        "first); remaining slots fill with the least-recently-checked eligible topics "
+        "(null last_checked_at first, then oldest), with random tiebreaking. "
         "In roundup mode, topics still within their cadence cooldown are excluded before "
-        "rotation runs, so the result may contain fewer than the limit (or be empty) when "
-        "everything tracked has been checked recently; cadence has no effect on non-roundup "
-        "listings. "
+        "rotation runs (unless next_check_at is reached, which bypasses the cooldown). "
+        "'dated' topics are invisible to roundups unless next_check_at is reached. "
+        "The result may be fewer than the limit (or empty) when nothing is eligible. "
         "Without roundup=true, all matching topics are returned sorted by title. "
         "By default only active (non-archived) topics are returned; pass include_archived=true "
         "to include archived topics as well. "
@@ -399,12 +438,18 @@ def remove_topic(id: str) -> str:
 
 @mcp.tool(
     description=(
-        "Updates the title, scope, notes, and/or cadence of an existing topic. "
+        "Updates the title, scope, notes, cadence, and/or next_check_at of an existing topic. "
         "Pass only the fields you want to change; omit or pass empty string to leave unchanged. "
-        "At least one of title, scope, notes, cadence, or clear_notes must be provided. "
+        "At least one of title, scope, notes, cadence, clear_notes, next_check_at, or "
+        "clear_next_check_at must be provided. "
         "To remove existing notes entirely, pass clear_notes=true (mutually exclusive with notes). "
-        "Valid cadence values: 'rare', 'occasional', 'regular', 'frequent', 'always' "
+        "Valid cadence values: 'rare', 'occasional', 'regular', 'frequent', 'always', 'dated' "
         "(see add_topic for meanings). "
+        "next_check_at: ISO 8601 UTC timestamp to schedule a time-sensitive check. For 'dated' "
+        "topics this re-embargoes the topic until the new date. For other cadences it schedules "
+        "an extra check on top of the normal rotation. Always convert to UTC before setting. "
+        "To cancel a scheduled check date without setting a new one, pass clear_next_check_at=true "
+        "(mutually exclusive with next_check_at). "
         "The topic ID, added_at, last_checked_at, and status are never changed by this call."
     )
 )
@@ -415,21 +460,37 @@ def update_topic(
     notes: str = "",
     cadence: str = "",
     clear_notes: bool = False,
+    next_check_at: str = "",
+    clear_next_check_at: bool = False,
 ) -> str:
     logger.info(
-        "update_topic called id=%r title=%r scope=%r cadence=%r clear_notes=%r",
+        "update_topic called id=%r title=%r scope=%r cadence=%r clear_notes=%r"
+        " next_check_at=%r clear_next_check_at=%r",
         id,
         title,
         scope,
         cadence,
         clear_notes,
+        next_check_at,
+        clear_next_check_at,
     )
     _validate_id(id)
     if clear_notes and notes:
         raise ValueError("pass either notes or clear_notes, not both")
-    if not title and not scope and not notes and not cadence and not clear_notes:
+    if clear_next_check_at and next_check_at:
+        raise ValueError("pass either next_check_at or clear_next_check_at, not both")
+    if (
+        not title
+        and not scope
+        and not notes
+        and not cadence
+        and not clear_notes
+        and not next_check_at
+        and not clear_next_check_at
+    ):
         raise ValueError(
-            "at least one of title, scope, notes, cadence, or clear_notes must be provided"
+            "at least one of title, scope, notes, cadence, clear_notes,"
+            " next_check_at, or clear_next_check_at must be provided"
         )
     new_title: str | None = None
     new_scope: str | None = None
@@ -445,7 +506,10 @@ def update_topic(
     if cadence:
         _validate_cadence(cadence)
         new_cadence = cadence
+    if next_check_at:
+        _validate_next_check_at(next_check_at)
     update_notes = bool(notes) or clear_notes
+    update_next_check_at = bool(next_check_at) or clear_next_check_at
     with _db_lock:
         topic = storage.update_topic(
             _get_conn(),
@@ -455,6 +519,8 @@ def update_topic(
             notes=notes if notes else None,
             update_notes=update_notes,
             cadence=new_cadence,
+            next_check_at=next_check_at if next_check_at else None,
+            update_next_check_at=update_next_check_at,
         )
     if topic is None:
         raise ValueError(f"topic not found: {id}")
