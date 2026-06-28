@@ -45,9 +45,9 @@ All database access is through plain functions that take a `sqlite3.Connection` 
 | Function | Purpose |
 |---|---|
 | `init_db(db_path)` | Opens/creates the database, runs schema migrations, returns the connection |
-| `add_topic(conn, title, scope, notes, cadence)` | Inserts a new topic, returns a `Topic` |
-| `list_topics(conn, scope, roundup, include_archived)` | Queries topics with optional scope filter, roundup logic (cadence-eligibility filter + rotation), and archived filter |
-| `update_topic(conn, topic_id, title, scope, notes, update_notes, cadence)` | Updates fields, returns the updated `Topic` or `None` |
+| `add_topic(conn, title, scope, notes, cadence, next_check_at)` | Inserts a new topic, returns a `Topic` |
+| `list_topics(conn, scope, roundup, include_archived)` | Queries topics with optional scope filter, roundup logic (cadence-eligibility filter + rotation + target-date prioritization), and archived filter |
+| `update_topic(conn, topic_id, title, scope, notes, update_notes, cadence, next_check_at, update_next_check_at)` | Updates fields, returns the updated `Topic` or `None` |
 | `archive_topic(conn, topic_id, archived)` | Sets status to `"archived"` or `"active"`, returns the updated `Topic` or `None` |
 | `remove_topic(conn, topic_id)` | Deletes by ID, returns success bool |
 | `get_scope_hierarchy()` | Returns the containment map; no database access |
@@ -76,6 +76,7 @@ class Topic(NamedTuple):
     notes: str | None     # optional search guidance, printable ASCII <=512 chars; null if unset
     status: str           # "active" (default) or "archived"
     cadence: str          # one of KNOWN_CADENCES; "regular" default for new topics
+    next_check_at: str | None  # ISO 8601 UTC; schedules a time-sensitive check; null if unset
 ```
 
 `Topic.to_dict()` produces the canonical JSON-serializable dict returned by all tools.
@@ -93,11 +94,12 @@ CREATE TABLE topics (
     last_checked_at TEXT,                              -- added in migration 2
     notes           TEXT,                              -- added in migration 3
     status          TEXT NOT NULL DEFAULT 'active',    -- added in migration 3
-    cadence         TEXT NOT NULL DEFAULT 'frequent'   -- added in migration 4
+    cadence         TEXT NOT NULL DEFAULT 'frequent',  -- added in migration 4
+    next_check_at   TEXT                               -- added in migration 5
 );
 ```
 
-`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 4` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the highest migration level whose columns are all present.
+`schema_version` holds a single row with the current migration level. `init_db` compares this value against `_SCHEMA_VERSION = 5` and applies any outstanding `ALTER TABLE` migrations. Legacy databases that pre-date version tracking are detected by column inspection on the first run and stamped with the highest migration level whose columns are all present.
 
 The `cadence` column's column-level default of `'frequent'` only fires for rows pre-existing at v3-to-v4 migration time; new rows inserted by `add_topic` use `DEFAULT_CADENCE = 'regular'` from the application layer.
 
@@ -123,11 +125,23 @@ KNOWN_SCOPES = frozenset({"world", "us", "pdx"})
 
 `list_topics(roundup=True)` implements topic rotation so that successive roundup calls distribute attention across all tracked topics rather than always returning the same ones. Only `status = 'active'` topics participate; archived topics are never returned in roundup mode.
 
-Eligibility runs as a SQL filter before rotation: a topic is eligible when its cadence is `'always'`, when `last_checked_at IS NULL`, or when `datetime(last_checked_at) <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. The clause is built per-call inside `list_topics` from the `cadence_days` parameter (defaulting to `_CADENCE_DAYS`) by `_build_cadence_eligibility_clause(cadence_days)`, and appended to the WHERE conditions only when `roundup=True`. The `days` values are f-string-interpolated into the SQL (not bound parameters); the `int >= 1` validation in `config.py` is the guard between the env input and the query. Wrapping the stored value in `datetime()` is required because `last_checked_at` is written as a Python isoformat string (e.g. `2026-06-11T16:57:46.495858+00:00`, using a `T` separator and `+00:00` offset), whereas SQLite's `datetime('now', ...)` produces `2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, a bare string comparison would wrongly report same-day timestamps as ineligible; `datetime()` on both sides normalizes to SQLite's canonical `YYYY-MM-DD HH:MM:SS` format, making the comparison correct.
+Eligibility runs as a SQL filter before rotation. The clause is built per-call by `_build_cadence_eligibility_clause(cadence_days)` and covers three cases:
 
-After eligibility filtering, the query orders by `last_checked_at ASC, RANDOM()` and applies a `LIMIT` equal to `roundup_limit` (a parameter of `list_topics`, defaulting to `_ROUNDUP_LIMIT = 6`). SQLite sorts `NULL` first in ascending order, so unchecked topics are naturally prioritized without an explicit `NULLS FIRST` clause. After the SELECT, `last_checked_at` is written for every returned row in a single batch UPDATE; if eligibility filtering returns zero rows, the update is skipped. The batch size is configurable via `INTERESTING_ROUNDUP_LIMIT` (parsed by `config.py`); see the Configuration section below.
+- **`dated` cadence**: eligible only when `next_check_at IS NOT NULL AND datetime(next_check_at) <= datetime('now')`. Without a target date the topic is permanently dormant.
+- **Normal cadences** (`rare`, `occasional`, `regular`, `frequent`, `always`): eligible when cadence is `'always'`, when `last_checked_at IS NULL`, or when `datetime(last_checked_at) <= datetime('now', '-N days')` for the cadence's minimum-interval `N`. Additionally, any non-`dated` topic is eligible when `next_check_at` is reached -- this is an additive extra check that bypasses the normal cooldown.
 
-The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs. The day values (not the keys) are configurable via `INTERESTING_CADENCE_DAYS`; see the Configuration section below.
+`datetime()` wrapping is required because timestamps are stored as Python isoformat strings (e.g. `2026-06-11T16:57:46.495858+00:00`, `T` separator, `+00:00` offset), whereas SQLite's `datetime('now', ...)` produces `2026-06-11 21:57:46` (space separator, no offset). Because `'T' > ' '`, a bare string comparison would wrongly report same-day timestamps as ineligible; `datetime()` on both sides normalizes to `YYYY-MM-DD HH:MM:SS`.
+
+After eligibility filtering, results are ordered to prioritize time-sensitive checks:
+
+1. Topics with a reached `next_check_at` (CASE = 0) before those without (CASE = 1)
+2. Within reached-target topics, oldest `next_check_at` first
+3. Among remaining slots, `last_checked_at ASC` (NULLs sort first, so unchecked topics lead)
+4. Random tiebreaking
+
+A `LIMIT` equal to `roundup_limit` (defaulting to `_ROUNDUP_LIMIT = 6`) caps results. After the SELECT, a single batch UPDATE writes `last_checked_at` for every returned row and clears `next_check_at` only for rows whose target date has actually been reached (`CASE WHEN datetime(next_check_at) <= datetime('now') THEN NULL ELSE next_check_at END`). A still-future `next_check_at` is preserved -- a followed topic pulled into the roundup by its normal cadence before its target date keeps that date, so its guaranteed extra check still fires. The returned `Topic` objects mirror this via `_target_reached(...)` in Python. If eligibility filtering returns zero rows, the update is skipped. The batch size is configurable via `INTERESTING_ROUNDUP_LIMIT` (parsed by `config.py`); see the Configuration section below.
+
+The cadence values exposed to clients (`rare`, `occasional`, `regular`, `frequent`, `always`, `dated`) and their day mappings live in `_CADENCE_DAYS`; `KNOWN_CADENCES` is the validation set, `DEFAULT_CADENCE = "regular"` is the application-layer default for new topics, and `_MIGRATION_CADENCE = "frequent"` is the column-level default applied to rows already in the database when migration 4 runs. The day values (not the keys) are configurable via `INTERESTING_CADENCE_DAYS`; `always` and `dated` cannot be overridden since their interval is `None` rather than a day count. See the Configuration section below.
 
 ## Connection Lifecycle and Testing
 
@@ -187,7 +201,7 @@ Guiding rule: **tune behavior, never tune stored-data semantics.** The following
 | Variable | Default | Description |
 |---|---|---|
 | `INTERESTING_ROUNDUP_LIMIT` | `6` | Maximum topics returned per roundup call. Must be a positive integer (`>= 1`). |
-| `INTERESTING_CADENCE_DAYS` | `rare:14,occasional:7,regular:3,frequent:1` | Comma-separated `key:days` pairs overriding cadence cooldown intervals. Unknown keys, the `always` key, non-integer values, and values `<= 0` are rejected. Unspecified cadences fall back to their defaults. `always` cannot be overridden (its interval is `None`, not a day count). |
+| `INTERESTING_CADENCE_DAYS` | `rare:14,occasional:7,regular:3,frequent:1` | Comma-separated `key:days` pairs overriding cadence cooldown intervals. Unknown keys, the `always` or `dated` keys, non-integer values, and values `<= 0` are rejected. Unspecified cadences fall back to their defaults. `always` and `dated` cannot be overridden (their interval is `None`, not a day count). |
 
 ### Database path resolution
 
