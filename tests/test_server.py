@@ -1509,6 +1509,32 @@ async def test_roundup_non_dated_next_check_at_bypasses_cooldown(isolated_db: st
     assert data[0]["id"] == topic_id
 
 
+async def test_roundup_future_next_check_at_survives_normal_rotation() -> None:
+    """A followed topic pulled into a roundup by normal cadence keeps a future next_check_at.
+
+    Regression: clearing next_check_at unconditionally would silently drop the guaranteed
+    extra check before its target date arrives. Only a reached target date should be cleared.
+    """
+    future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+    async with create_connected_server_and_client_session(mcp) as client:
+        # Never-checked 'regular' topic with a target date 10 days out. It is eligible
+        # now via normal cadence (last_checked_at IS NULL), not via the target date.
+        add_result = await client.call_tool(
+            "add_topic",
+            {"title": "Followed with future date", "cadence": "regular", "next_check_at": future},
+        )
+        topic_id = json.loads(add_result.content[0].text)["id"]  # type: ignore[union-attr]
+        roundup_result = await client.call_tool("list_topics", {"roundup": True})
+        roundup_data = json.loads(roundup_result.content[0].text)  # type: ignore[union-attr]
+        # Returned object must still carry the future target date.
+        assert roundup_data[0]["next_check_at"] is not None
+        # And it must be persisted, not just present in the response.
+        list_result = await client.call_tool("list_topics", {})
+    data = json.loads(list_result.content[0].text)  # type: ignore[union-attr]
+    topic = next(t for t in data if t["id"] == topic_id)
+    assert topic["next_check_at"] is not None
+
+
 async def test_roundup_target_date_topics_prioritized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

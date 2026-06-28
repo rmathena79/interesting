@@ -102,10 +102,10 @@ class Topic(NamedTuple):
             "scope": self.scope,
             "added_at": self.added_at,
             "last_checked_at": self.last_checked_at,
+            "next_check_at": self.next_check_at,
             "notes": self.notes,
             "status": self.status,
             "cadence": self.cadence,
-            "next_check_at": self.next_check_at,
         }
 
 
@@ -134,6 +134,18 @@ def _fetch_topic(conn: sqlite3.Connection, topic_id: str) -> Topic | None:
         (topic_id,),
     ).fetchone()
     return _topic_from_row(row) if row is not None else None
+
+
+def _target_reached(next_check_at: str | None, now: datetime) -> bool:
+    """Whether a stored next_check_at timestamp is at or before `now` (both UTC).
+
+    Mirrors the SQL `datetime(next_check_at) <= datetime('now')` comparison used in
+    the eligibility clause, so a topic returned in a roundup is judged the same way
+    here as it was when selected.
+    """
+    if next_check_at is None:
+        return False
+    return datetime.fromisoformat(next_check_at) <= now
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -315,16 +327,30 @@ def list_topics(
     )
 
     if roundup and rows:
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
         ids = [row[0] for row in rows]
         id_placeholders = ",".join("?" * len(ids))
+        # Clear next_check_at only for topics whose target date has actually been
+        # reached. A still-future target date -- e.g. on a followed topic pulled into
+        # this roundup by its normal cadence before the date arrives -- must survive,
+        # otherwise its guaranteed extra check on the date would be silently lost.
         conn.execute(
-            f"UPDATE topics SET last_checked_at = ?, next_check_at = NULL"
+            f"UPDATE topics SET last_checked_at = ?,"
+            f" next_check_at = CASE"
+            f" WHEN next_check_at IS NOT NULL AND datetime(next_check_at) <= datetime('now')"
+            f" THEN NULL ELSE next_check_at END"
             f" WHERE id IN ({id_placeholders})",
             [now, *ids],
         )
         conn.commit()
-        return [_topic_from_row(r)._replace(last_checked_at=now, next_check_at=None) for r in rows]
+        result: list[Topic] = []
+        for r in rows:
+            topic = _topic_from_row(r)._replace(last_checked_at=now)
+            if _target_reached(topic.next_check_at, now_dt):
+                topic = topic._replace(next_check_at=None)
+            result.append(topic)
+        return result
     return [_topic_from_row(r) for r in rows]
 
 

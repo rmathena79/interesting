@@ -75,7 +75,7 @@ If you are unsure, ask the user or default to `world` and let them correct it.
 
 ## Cadence
 
-Each topic has a `cadence` field that controls how often it is eligible for inclusion in a roundup. In roundup mode the server filters out topics still within their cadence cooldown before applying the rotation/limit, so slow-moving stories don't crowd out faster-moving ones (or genuinely new search territory).
+Each topic has a `cadence` field that controls how often it is eligible for inclusion in a roundup. In roundup mode the server filters out topics still within their cadence cooldown before applying the rotation/limit, so slow-moving stories don't crowd out faster-moving ones (or genuinely new search territory). (A topic whose `next_check_at` target date has been reached is eligible even within its cooldown -- see Target check dates below.)
 
 ### Values
 
@@ -105,7 +105,7 @@ Topics support an optional `next_check_at` field (ISO 8601 UTC timestamp) that s
 **For all other cadences (followed topics):**
 - Normal cadence rotation continues unchanged.
 - When `next_check_at` is reached, the topic becomes eligible regardless of its cadence cooldown -- an extra guaranteed check on top of the normal schedule.
-- After appearing in a roundup while the target date is active, the server clears `next_check_at`; normal cadence resumes.
+- The server clears `next_check_at` only once the target date has been reached. A still-future target date is preserved even if the topic appears in a roundup via its normal cadence first, so the guaranteed extra check still fires on the date.
 
 **Roundup prioritization:**
 Topics with a reached `next_check_at` are returned before other eligible topics. Among those, older target dates are returned before more recent ones. This ensures time-sensitive checks are never crowded out by the regular rotation.
@@ -114,7 +114,7 @@ Topics with a reached `next_check_at` are returned before other eligible topics.
 Call `update_topic` with a new `next_check_at` to reschedule. The topic re-embargoes (for `dated`) or re-targets (for other cadences) immediately. To cancel a target date without setting a new one, use `clear_next_check_at=true`.
 
 **Time zones:**
-`next_check_at` is stored and compared in UTC. Convert from the user's local timezone when setting a date:
+`next_check_at` is stored and compared in UTC. The value must include an explicit UTC offset or a trailing `Z`; a naive timestamp with no offset (e.g. `2026-07-15T07:00:00`) is rejected. Convert from the user's local timezone when setting a date:
 - Date-only event ("check on July 15"): use midnight of that date in the user's local timezone. Example: PDT (UTC-7) -> `2026-07-15T07:00:00Z`.
 - Known event time ("the 2pm press conference on July 15"): convert that local time to UTC directly.
 - Unknown timezone: use UTC midnight and note the assumption to the user.
@@ -155,7 +155,7 @@ Parameters:
 - `scope` (string, optional): Must be a known scope (see `list_scopes`). Defaults to `"world"`. Pick the narrowest known scope that contains the story.
 - `notes` (string, optional): Printable ASCII, max 512 chars. Search guidance for the AI assistant -- see Notes field section above. Omit if no guidance is needed.
 - `cadence` (string, optional): One of `rare`, `occasional`, `regular`, `frequent`, `always`, `dated`. Defaults to `regular`. See the Cadence section above for what each value means.
-- `next_check_at` (string, optional): ISO 8601 UTC timestamp for a target check date. See the Target check dates section above. Required in practice when `cadence` is `dated`; optional for all other cadences.
+- `next_check_at` (string, optional): ISO 8601 UTC timestamp for a target check date. Must include an explicit offset or trailing `Z` (e.g. `2026-07-15T07:00:00Z`); naive timestamps are rejected. See the Target check dates section above. Required in practice when `cadence` is `dated`; optional for all other cadences.
 
 Returns: `{"id": "...", "title": "...", "scope": "...", "added_at": "...", "last_checked_at": null, "next_check_at": null, "notes": null, "status": "active", "cadence": "regular"}`
 
@@ -169,14 +169,14 @@ Parameters:
 
 **Without `roundup=true`:** Returns all matching active topics sorted by title. Cadence does not affect this mode.
 
-**With `roundup=true` (rotation mode):** Returns up to N (configurable) active topics after filtering out those still within their cadence cooldown. The server records `last_checked_at` for every returned topic and clears `next_check_at` for any topic whose target date was active. The result may contain fewer than the limit -- or be empty -- when everything tracked has been checked recently.
+**With `roundup=true` (rotation mode):** Returns up to N (configurable) active topics after filtering out those still within their cadence cooldown. The server records `last_checked_at` for every returned topic and clears `next_check_at` for any topic whose target date had been reached (a still-future target date is preserved). The result may contain fewer than the limit -- or be empty -- when everything tracked has been checked recently.
 
 Ordering prioritizes time-sensitive checks: topics whose `next_check_at` has been reached appear first, sorted by oldest target date first (most overdue first). All other eligible topics follow, ordered by `last_checked_at ASC` (least recently checked first, with `null` -- never checked -- sorted before any timestamp), with random tiebreaking among equals.
 
 Returns: JSON array of `{id, title, scope, added_at, last_checked_at, next_check_at, notes, status, cadence}` objects. Empty array if nothing is tracked or if all eligible topics are still within their cadence cooldown.
 - `added_at`: ISO 8601 UTC timestamp set when the topic was added; `null` for topics added before this field existed.
 - `last_checked_at`: ISO 8601 UTC timestamp of the last `roundup=true` call that returned this topic; `null` if the topic has never been included in a roundup query. This records when the topic was last queried as part of a roundup -- not whether new information was found.
-- `next_check_at`: ISO 8601 UTC timestamp for the scheduled target check date, or `null` if none is set. The server clears this field after returning the topic in a roundup while the date was active. See the Target check dates section above.
+- `next_check_at`: ISO 8601 UTC timestamp for the scheduled target check date, or `null` if none is set. The server clears this field after returning the topic in a roundup once the date has been reached; a still-future date is left intact. See the Target check dates section above.
 - `notes`: Search guidance string, or `null` if no notes were recorded. Review notes before searching -- they refine your query angle.
 - `status`: `"active"` or `"archived"`. Under default parameters only `"active"` topics are returned.
 - `cadence`: One of `rare`, `occasional`, `regular`, `frequent`, `always`, `dated`. See the Cadence section above.
@@ -189,7 +189,7 @@ Parameters:
 - `notes` (string, optional): New notes. Omit or pass empty string to leave unchanged. Same format rules as `add_topic`. Mutually exclusive with `clear_notes`.
 - `cadence` (string, optional): New cadence. Must be one of `rare`, `occasional`, `regular`, `frequent`, `always`, `dated`. Omit or pass empty string to leave unchanged. Adjust as a story's pace changes. If changing to `dated`, also provide `next_check_at`.
 - `clear_notes` (boolean, optional, default false): Pass `true` to remove existing notes entirely. Mutually exclusive with `notes`.
-- `next_check_at` (string, optional): ISO 8601 UTC timestamp. Sets or replaces the target check date. See the Target check dates section above. Mutually exclusive with `clear_next_check_at`.
+- `next_check_at` (string, optional): ISO 8601 UTC timestamp. Must include an explicit offset or trailing `Z` (e.g. `2026-07-15T07:00:00Z`); naive timestamps are rejected. Sets or replaces the target check date. See the Target check dates section above. Mutually exclusive with `clear_next_check_at`.
 - `clear_next_check_at` (boolean, optional, default false): Pass `true` to cancel the current target date without setting a new one. For `dated` topics this leaves the topic dormant; also consider changing cadence or archiving. Mutually exclusive with `next_check_at`.
 
 At least one of `title`, `scope`, `notes`, `cadence`, `clear_notes`, `next_check_at`, or `clear_next_check_at` must be provided.
@@ -258,7 +258,7 @@ The user can add, list, and remove tracked topics conversationally. Map natural 
 | timeframe | `Xh` or `Xd` (hours/days) | `48h` |
 
 **Workflow:**
-1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope. The server returns up to N (configurable) active topics after filtering out any still within their cadence cooldown, applies the containment rule (see Filtering rule above), records `last_checked_at` for each returned topic, and clears `next_check_at` for any topic whose target date was active. Topics with a reached `next_check_at` appear first in the result, sorted by oldest target date first; the remainder follow in normal rotation order. Not all tracked topics will appear in every roundup -- this is by design. The result may contain fewer than the limit, or be empty, when everything tracked has been checked recently.
+1. Call `list_topics(scope=<requested_scope>, roundup=true)` to retrieve a rotation batch of tracked stories filtered to the requested scope (containment rule applies -- see Filtering rule above). See the `list_topics` reference for the full rotation, ordering, and `next_check_at`-clearing behavior. Not all tracked topics will appear in every roundup -- this is by design, and the result may be smaller than the limit or empty when everything tracked has been checked recently.
 2. For each returned topic, review its `notes` field before searching. Use notes to sharpen the search query -- adjust angle, include alternate names, exclude irrelevant terms.
 3. Search for new developments on each returned tracked topic within the requested timeframe.
 4. For tracked topics with no significant new development, skip rather than re-summarizing. When something material has changed, present the update and context, not a full recap.
